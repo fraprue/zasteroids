@@ -4,6 +4,8 @@ const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const zm = @import("zmath");
 
+const Render = @import("render.zig");
+
 pub const ObjectType = []const u8;
 
 pub const ObjectState = struct {
@@ -11,20 +13,7 @@ pub const ObjectState = struct {
     rot: f32,
     scale: f32,
     type: ObjectType,
-    mesh_id: u32,
-};
-
-pub const Vertex = struct {
-    position: [2]f32,
-    color: [4]f32,
-};
-
-pub const Mesh = struct {
-    index_offset: u32,
-    vertex_offset: i32,
-    num_indices: u32,
-    num_vertices: u32,
-    collision_sphere_radius: f32,
+    mesh_type: Render.MeshType,
 };
 
 pub const FrameStatsData = std.DoublyLinkedList;
@@ -108,17 +97,8 @@ pub const Config = struct {
     asteroid_speed: f32,
 };
 
-pub const GraphicsState = struct {
-    window: *zglfw.Window,
-    gctx: *zgpu.GraphicsContext,
-    pipeline: zgpu.RenderPipelineHandle,
-    bind_group: zgpu.BindGroupHandle,
-    vertex_buffer: zgpu.BufferHandle,
-    index_buffer: zgpu.BufferHandle,
-};
-
 pub const State = struct {
-    graphics: GraphicsState,
+    graphics: *Render.GraphicsState,
     config: Config,
     game_state: GameState,
     debug_state: DebugState,
@@ -127,13 +107,77 @@ pub const State = struct {
 
     objects: ObjectMap,
     queued_deletion_id_list: std.ArrayList(ObjectId),
-    meshes: std.ArrayList(Mesh),
 
     rng: std.Random.DefaultPrng,
 
     frame_time_history: FrameStatsData,
     shot_timer: f32,
     asteroid_spawn_timer: f32,
+
+    pub fn init(self: *State, allocator: std.mem.Allocator) !void {
+        const prng: std.Random.DefaultPrng = .init(blk: {
+            var seed: u64 = undefined;
+            try std.posix.getrandom(std.mem.asBytes(&seed));
+            break :blk seed;
+        });
+
+        const config = Config{
+            .vsync = true,
+            .fps_target = -1,
+
+            .player_speed = 0.3,
+
+            .shot_delay = 1.0,
+            .shot_speed = 0.6,
+
+            .asteroid_spawn_delay = 3.0,
+            .asteroid_speed = 0.2,
+        };
+
+        self.* = .{
+            .graphics = try Render.init(allocator),
+
+            .frame_time_history = .{},
+
+            .rng = prng,
+
+            .game_state = GameState.starting,
+            .config = config,
+
+            .player_name = "",
+
+            .objects = .init(allocator),
+            .queued_deletion_id_list = .empty,
+
+            .shot_timer = 0.0,
+            .asteroid_spawn_timer = 0.0,
+
+            .debug_state = .{
+                .enabled = false,
+                .current_render_perf_in_ns = 0,
+                .current_update_perf_in_ns = 0,
+                .avg_render_perf_in_ns = 0,
+                .avg_update_perf_in_ns = 0,
+                .update_tick_count = 0,
+            },
+        };
+
+        self.setVSync(true);
+    }
+
+    pub fn deinit(self: *State, allocator: std.mem.Allocator) void {
+        allocator.free(self.player_name);
+
+        while (self.frame_time_history.popFirst()) |node| {
+            const data_point: *FrameStatsDataPoint = @fieldParentPtr("node", node);
+            allocator.destroy(data_point);
+        }
+        self.queued_deletion_id_list.deinit(allocator);
+        self.objects.deinit();
+
+        Render.deinit(allocator, self.graphics);
+        allocator.destroy(self.graphics);
+    }
 
     pub fn startGame(self: *State) void {
         _ = self.createObject(
@@ -142,7 +186,7 @@ pub const State = struct {
                 .rot = 0.0,
                 .scale = 0.1,
                 .type = "player",
-                .mesh_id = 0,
+                .mesh_type = Render.MeshType.triangle,
             },
         ) catch unreachable;
 

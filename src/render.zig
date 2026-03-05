@@ -8,7 +8,32 @@ const zm = @import("zmath");
 const content_dir = @import("build_options").content_dir;
 
 const State = @import("state.zig");
-const Vertex = State.Vertex;
+
+pub const Vertex = struct {
+    position: [2]f32,
+    color: [4]f32,
+};
+
+pub const MeshType = enum(u32) { triangle, asteroid };
+
+pub const Mesh = struct {
+    index_offset: u32,
+    vertex_offset: i32,
+    num_indices: u32,
+    num_vertices: u32,
+    collision_sphere_radius: f32,
+};
+
+pub const GraphicsState = struct {
+    window: *zglfw.Window,
+    gctx: *zgpu.GraphicsContext,
+    pipeline: zgpu.RenderPipelineHandle,
+    bind_group: zgpu.BindGroupHandle,
+    vertex_buffer: zgpu.BufferHandle,
+    index_buffer: zgpu.BufferHandle,
+
+    meshes: std.ArrayList(Mesh),
+};
 
 // zig fmt: off
 const wgsl_shader =
@@ -42,7 +67,7 @@ const wgsl_shader =
 
 const ShaderInputType = [4]f32; //posX, posY, rotation, scale
 
-pub fn init(allocator: std.mem.Allocator) !*State.State {
+pub fn init(allocator: std.mem.Allocator) !*GraphicsState {
     try zglfw.init();
     zglfw.windowHint(.client_api, .no_api);
 
@@ -108,7 +133,7 @@ pub fn init(allocator: std.mem.Allocator) !*State.State {
         },
     });
 
-    var meshes: std.ArrayList(State.Mesh) = .empty;
+    var meshes: std.ArrayList(Mesh) = .empty;
     var meshes_indices: std.ArrayList(u32) = .empty;
     defer meshes_indices.deinit(allocator);
     var meshes_vertices: std.ArrayList(Vertex) = .empty;
@@ -176,88 +201,29 @@ pub fn init(allocator: std.mem.Allocator) !*State.State {
         break :pipeline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
     };
 
-    const prng: std.Random.DefaultPrng = .init(blk: {
-        var seed: u64 = undefined;
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-        break :blk seed;
-    });
-
-    const graphics = State.GraphicsState{
+    const graphics = try allocator.create(GraphicsState);
+    graphics.* = .{
         .window = window,
         .gctx = gctx,
         .pipeline = pipeline,
         .bind_group = bind_group,
         .vertex_buffer = vertex_buffer,
         .index_buffer = index_buffer,
-    };
 
-    const config = State.Config{
-        .vsync = true,
-        .fps_target = -1,
-
-        .player_speed = 0.3,
-
-        .shot_delay = 1.0,
-        .shot_speed = 0.6,
-
-        .asteroid_spawn_delay = 3.0,
-        .asteroid_speed = 0.2,
-    };
-
-    const state = try allocator.create(State.State);
-    state.* = .{
-        .graphics = graphics,
         .meshes = meshes,
-
-        .frame_time_history = .{},
-
-        .rng = prng,
-
-        .game_state = State.GameState.starting,
-        .config = config,
-
-        .player_name = "",
-
-        .objects = .init(allocator),
-        .queued_deletion_id_list = .empty,
-
-        .shot_timer = 0.0,
-        .asteroid_spawn_timer = 0.0,
-
-        .debug_state = .{
-            .enabled = false,
-            .current_render_perf_in_ns = 0,
-            .current_update_perf_in_ns = 0,
-            .avg_render_perf_in_ns = 0,
-            .avg_update_perf_in_ns = 0,
-            .update_tick_count = 0,
-        },
     };
 
-    state.setVSync(true);
-
-    return state;
+    return graphics;
 }
 
-fn deinitGraphics(allocator: std.mem.Allocator, graphics: *State.GraphicsState) void {
+pub fn deinit(allocator: std.mem.Allocator, graphics: *GraphicsState) void {
     graphics.window.destroy();
     graphics.gctx.releaseResource(graphics.pipeline);
     graphics.gctx.releaseResource(graphics.bind_group);
     graphics.gctx.destroy(allocator);
-}
 
-pub fn deinit(allocator: std.mem.Allocator, state: *State.State) void {
-    deinitGraphics(allocator, &state.graphics);
-    allocator.free(state.player_name);
+    graphics.meshes.deinit(allocator);
 
-    state.meshes.deinit(allocator);
-    while (state.frame_time_history.popFirst()) |node| {
-        const data_point: *State.FrameStatsDataPoint = @fieldParentPtr("node", node);
-        allocator.destroy(data_point);
-    }
-    state.queued_deletion_id_list.deinit(allocator);
-    state.objects.deinit();
-    allocator.destroy(state);
     zgui.backend.deinit();
     zgui.plot.deinit();
     zgui.deinit();
@@ -266,13 +232,13 @@ pub fn deinit(allocator: std.mem.Allocator, state: *State.State) void {
 
 fn initMeshes(
     allocator: std.mem.Allocator,
-    meshes: *std.ArrayList(State.Mesh),
+    meshes: *std.ArrayList(Mesh),
     meshes_indices: *std.ArrayList(u32),
     meshes_vertices: *std.ArrayList(Vertex),
 ) void {
     // Basic Triangle
     {
-        const vertex_data = [_]State.Vertex{
+        const vertex_data = [_]Vertex{
             .{ .position = [2]f32{ 0.0, 1.0 }, .color = [4]f32{ 1.0, 0.0, 0.0, 1.0 } },
             .{ .position = [2]f32{ -1.0, -1.0 }, .color = [4]f32{ 0.0, 1.0, 0.0, 1.0 } },
             .{ .position = [2]f32{ 1.0, -1.0 }, .color = [4]f32{ 0.0, 0.0, 1.0, 1.0 } },
@@ -292,7 +258,7 @@ fn initMeshes(
 
     // Basic Asteroid
     {
-        const vertex_data = [_]State.Vertex{
+        const vertex_data = [_]Vertex{
             .{ .position = [2]f32{ 0.0, 1.0 }, .color = [4]f32{ 0.5, 0.5, 0.0, 1.0 } },
             .{ .position = [2]f32{ -0.7, 0.0 }, .color = [4]f32{ 0.5, 0.5, 0.0, 1.0 } },
             .{ .position = [2]f32{ -0.3, -1.0 }, .color = [4]f32{ 0.5, 0.5, 0.0, 1.0 } },
@@ -317,7 +283,7 @@ fn appendMesh(
     allocator: std.mem.Allocator,
     vertex_data: []const Vertex,
     index_data: []const u32,
-    meshes: *std.ArrayList(State.Mesh),
+    meshes: *std.ArrayList(Mesh),
     meshes_indices: *std.ArrayList(u32),
     meshes_vertices: *std.ArrayList(Vertex),
 ) void {
@@ -614,11 +580,12 @@ pub fn render(state: *State.State, allocator: std.mem.Allocator) void {
                         bind_group,
                         &.{mem.offset},
                     );
+                    const mesh_id = @intFromEnum(render_object.mesh_type);
                     pass.drawIndexed(
-                        state.meshes.items[render_object.mesh_id].num_indices,
+                        state.graphics.meshes.items[mesh_id].num_indices,
                         1,
-                        state.meshes.items[render_object.mesh_id].index_offset,
-                        state.meshes.items[render_object.mesh_id].vertex_offset,
+                        state.graphics.meshes.items[mesh_id].index_offset,
+                        state.graphics.meshes.items[mesh_id].vertex_offset,
                         0,
                     );
                 }

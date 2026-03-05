@@ -1,7 +1,7 @@
 const std = @import("std");
 const zm = @import("zmath");
 
-const render = @import("render.zig");
+const Render = @import("render.zig");
 const State = @import("state.zig");
 
 const ScreenEdge = enum { north, east, south, west };
@@ -19,8 +19,11 @@ pub fn main() !void {
         try std.posix.chdir(path);
     }
 
-    const state = try render.init(gpa);
-    defer render.deinit(gpa, state);
+    const state = try gpa.create(State.State);
+    defer gpa.destroy(state);
+
+    try state.init(gpa);
+    defer state.deinit(gpa);
 
     var fps_timer = try std.time.Timer.start();
 
@@ -42,7 +45,7 @@ pub fn main() !void {
             render_perf_timer.reset();
         }
 
-        render.render(state, gpa);
+        Render.render(state, gpa);
 
         if (state.debug_state.enabled) {
             state.debug_state.current_render_perf_in_ns += render_perf_timer.read();
@@ -94,9 +97,10 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
         rotated_forward[0] = forward[0] * sincos[1] - forward[1] * sincos[0];
         rotated_forward[1] = forward[0] * sincos[0] + forward[1] * sincos[1];
 
-        // const forward = zm.Vec{ 0.0, 1.0, 0.0, 0.0 };
-        // var rotated_forward = zm.mul(zm.rotationZ(player.rot), forward);
+        // const forward_test = zm.Vec{ 0.0, 1.0, 0.0, 0.0 };
+        // const rotated_forward_test = zm.mul(zm.rotationZ(player.rot), forward_test);
         // std.debug.print("Rotated Forward: x: {d}, y:{d}\n", .{ rotated_forward[0], rotated_forward[1] });
+        // std.debug.print("Rotated Forward Test: x: {d}, y:{d}\n", .{ rotated_forward_test[0], rotated_forward_test[1] });
 
         rotated_forward = move_speed * delta_time * rotated_forward;
 
@@ -125,17 +129,7 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
             }
         }
 
-        // Wrap around player positions
-        if (player.pos[0] > 1.0) {
-            player.pos[0] = -1.0;
-        } else if (player.pos[0] < -1.0) {
-            player.pos[0] = 1.0;
-        }
-        if (player.pos[1] > 1.0) {
-            player.pos[1] = -1.0;
-        } else if (player.pos[1] < -1.0) {
-            player.pos[1] = 1.0;
-        }
+        wrapPosCoordinates(&player.pos);
 
         state.shot_timer += delta_time[0];
         if (state.graphics.window.getKey(.space) == .press) {
@@ -147,7 +141,7 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
                         .rot = player.rot,
                         .scale = 0.02,
                         .type = "projectile",
-                        .mesh_id = 0,
+                        .mesh_type = Render.MeshType.triangle,
                     },
                 ) catch unreachable;
 
@@ -186,21 +180,12 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
             object.pos += object_rotated_forward;
 
             if (std.mem.eql(u8, state.getObjectType(object_id) catch unreachable, "asteroid")) {
-                // Wrap around asteroid positions
-                if (object.pos[0] > 1.0) {
-                    object.pos[0] = -1.0;
-                } else if (object.pos[0] < -1.0) {
-                    object.pos[0] = 1.0;
-                }
-                if (object.pos[1] > 1.0) {
-                    object.pos[1] = -1.0;
-                } else if (object.pos[1] < -1.0) {
-                    object.pos[1] = 1.0;
-                }
+                wrapPosCoordinates(&object.pos);
             } else if (std.mem.eql(u8, state.getObjectType(object_id) catch unreachable, "projectile")) {
                 // Remove out-of-bounds projectiles
-                if (@abs(object.pos[0]) > 1.0 or @abs(object.pos[1]) > 1.0) {
-                    state.removeObject(object_id);
+                const margin = 0.2;
+                if (@abs(object.pos[0]) > 1.0 + margin or @abs(object.pos[1]) > 1.0 + margin) {
+                    state.removeObjectQueued(allocator, object_id) catch unreachable;
                 }
             }
         }
@@ -240,46 +225,7 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
         state.asteroid_spawn_timer += delta_time[0];
         if (state.asteroid_spawn_timer > state.config.asteroid_spawn_delay) {
             state.asteroid_spawn_timer = 0.0;
-
-            const screen_edge = @as(ScreenEdge, @enumFromInt(state.rng.random().intRangeAtMost(u2, 0, 3)));
-
-            var pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 };
-            var rot = state.rng.random().float(f32) * std.math.pi / 2.0;
-            switch (screen_edge) {
-                ScreenEdge.north => {
-                    pos[0] = normToVertexSpace(state.rng.random().float(f32));
-                    pos[1] = 1.0;
-                    rot = rot + std.math.pi * 0.75;
-                },
-                ScreenEdge.east => {
-                    pos[0] = 1.0;
-                    pos[1] = normToVertexSpace(state.rng.random().float(f32));
-                    rot = rot + std.math.pi / 4.0;
-                },
-                ScreenEdge.south => {
-                    pos[0] = normToVertexSpace(state.rng.random().float(f32));
-                    pos[1] = -1.0;
-                    rot = rot - std.math.pi / 4.0;
-                },
-                ScreenEdge.west => {
-                    pos[0] = -1.0;
-                    pos[1] = normToVertexSpace(state.rng.random().float(f32));
-                    rot = rot - std.math.pi * 0.75;
-                },
-            }
-
-            _ = state.createObject(
-                .{
-                    .pos = pos,
-                    .rot = rot,
-                    .scale = 0.1,
-                    .type = "asteroid",
-                    .mesh_id = 1,
-                },
-            ) catch unreachable;
-            if (state.debug_state.enabled) {
-                std.debug.print("Created Asteroid at edge: {}, pos: {d}, {d}, rot: {d}\n", .{ screen_edge, pos[0], pos[1], rot });
-            }
+            spawnAsteroid(state);
         }
     }
     state.removeQueuedObjects();
@@ -295,16 +241,87 @@ test "norm to vertex space conversion" {
     try std.testing.expect(normToVertexSpace(0.5) == 0.0);
 }
 
+fn wrapPosCoordinates(pos: *zm.Vec) void {
+    if (pos[0] > 1.0) {
+        pos[0] = -1.0;
+    } else if (pos[0] < -1.0) {
+        pos[0] = 1.0;
+    }
+    if (pos[1] > 1.0) {
+        pos[1] = -1.0;
+    } else if (pos[1] < -1.0) {
+        pos[1] = 1.0;
+    }
+}
+
+test "object position wrapping" {
+    var unchanged_pos = zm.Vec{ 0.5, 0.5, 0.0, 0.0 };
+    wrapPosCoordinates(&unchanged_pos);
+    try std.testing.expect(zm.all(zm.isNearEqual(unchanged_pos, zm.Vec{ 0.5, 0.5, 0.0, 0.0 }, zm.f32x4s(0.0)), 2));
+
+    var edge_pos = zm.Vec{ 1.0, -1.0, 0.0, 0.0 };
+    wrapPosCoordinates(&edge_pos);
+    try std.testing.expect(zm.all(zm.isNearEqual(edge_pos, zm.Vec{ 1.0, -1.0, 0.0, 0.0 }, zm.f32x4s(0.0)), 2));
+
+    var outside_pos = zm.Vec{ 1.1, -1.1, 0.0, 0.0 };
+    wrapPosCoordinates(&outside_pos);
+    try std.testing.expect(zm.all(zm.isNearEqual(outside_pos, zm.Vec{ -1.0, 1.0, 0.0, 0.0 }, zm.f32x4s(0.0)), 2));
+
+    var ignore_coordinates_pos = zm.Vec{ 0.0, 0.0, 1.1, -1.1 };
+    wrapPosCoordinates(&ignore_coordinates_pos);
+    try std.testing.expect(zm.all(zm.isNearEqual(ignore_coordinates_pos, zm.Vec{ 0.0, 0.0, 0.0, 0.0 }, zm.f32x4s(0.0)), 2));
+}
+
+fn spawnAsteroid(state: *State.State) void {
+    const screen_edge = @as(ScreenEdge, @enumFromInt(state.rng.random().intRangeAtMost(u2, 0, 3)));
+
+    var pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 };
+    const spread_angle = std.math.pi / 2.0;
+    var rot = state.rng.random().float(f32) * spread_angle;
+    switch (screen_edge) {
+        ScreenEdge.north => {
+            pos[0] = normToVertexSpace(state.rng.random().float(f32));
+            pos[1] = 1.0;
+            rot = rot + std.math.pi * 0.75;
+        },
+        ScreenEdge.east => {
+            pos[0] = 1.0;
+            pos[1] = normToVertexSpace(state.rng.random().float(f32));
+            rot = rot + std.math.pi / 4.0;
+        },
+        ScreenEdge.south => {
+            pos[0] = normToVertexSpace(state.rng.random().float(f32));
+            pos[1] = -1.0;
+            rot = rot - std.math.pi / 4.0;
+        },
+        ScreenEdge.west => {
+            pos[0] = -1.0;
+            pos[1] = normToVertexSpace(state.rng.random().float(f32));
+            rot = rot - std.math.pi * 0.75;
+        },
+    }
+
+    _ = state.createObject(
+        .{
+            .pos = pos,
+            .rot = rot,
+            .scale = 0.1,
+            .type = "asteroid",
+            .mesh_type = Render.MeshType.asteroid,
+        },
+    ) catch unreachable;
+    if (state.debug_state.enabled) {
+        std.debug.print("Created Asteroid at edge: {}, pos: {d}, {d}, rot: {d}\n", .{ screen_edge, pos[0], pos[1], rot });
+    }
+}
+
 fn collides(state: *State.State, o1: *State.ObjectState, o2: *State.ObjectState) bool {
     const x_dist = o2.pos[0] - o1.pos[0];
     const y_dist = o2.pos[1] - o1.pos[1];
     const distance = std.math.sqrt(x_dist * x_dist + y_dist * y_dist);
 
-    const o1_collision_radius = state.meshes.items[o1.mesh_id].collision_sphere_radius * o1.scale;
-    const o2_collision_radius = state.meshes.items[o2.mesh_id].collision_sphere_radius * o2.scale;
-    // std.debug.print("Distance: {d}\n", .{distance});
-    // std.debug.print("Coll radius for o1: {d}\n", .{o1_collision_radius});
-    // std.debug.print("Coll radius for o2: {d}\n", .{o2_collision_radius});
+    const o1_collision_radius = state.graphics.meshes.items[@intFromEnum(o1.mesh_type)].collision_sphere_radius * o1.scale;
+    const o2_collision_radius = state.graphics.meshes.items[@intFromEnum(o2.mesh_type)].collision_sphere_radius * o2.scale;
 
     return distance <= (o1_collision_radius + o2_collision_radius);
 }
