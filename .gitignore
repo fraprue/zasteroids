@@ -1,0 +1,26 @@
+# Ignore all files by default, but scan all directories
+*
+!*/
+
+!.gitignore
+
+!.zigversion
+!*.zig
+!*.zig.zon
+
+!*.c
+!*.cpp
+!*.hpp
+!*.h
+!*.hlsl
+!*.hlsli
+!*.ttf
+
+!LICENSE*
+!*.txt
+!*.md
+
+# Ignore some special directories
+*zig-cache
+*zig-out
+*vscode
