@@ -22,8 +22,8 @@
 
     .dependencies = .{
         .zgui = .{
-            .url = "git+https://github.com/zig-gamedev/zgui.git#ea5ef54ffa2487cccbaa4d84b89cf56bbeaf58ab",
-            .hash = "zgui-0.6.0-dev--L6sZAD7bQD9cbuCtZ_eZU0HEaAaCDN3Cc2Mv6IGBeyD",
+            .url = "git+https://github.com/zig-gamedev/zgui.git#ce016156a8520c438e886cd6c0b605e10ee7af3d",
+            .hash = "zgui-0.6.0-dev--L6sZKkSbgCUBXLVfwJDPpMkETz7ll-mmQYQae-nMxjt",
         },
         .zglfw = .{
             .url = "git+https://github.com/zig-gamedev/zglfw.git#1b008a0224def3e35a6affb1e7d77dbe36643de2",
