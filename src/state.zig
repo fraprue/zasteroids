@@ -1,10 +1,8 @@
 const std = @import("std");
 
-const zglfw = @import("zglfw");
-const zgpu = @import("zgpu");
 const zm = @import("zmath");
 
-const Render = @import("render.zig");
+const MeshType = @import("render.zig").MeshType;
 
 pub const ObjectType = []const u8;
 
@@ -13,7 +11,7 @@ pub const ObjectState = struct {
     rot: f32,
     scale: f32,
     type: ObjectType,
-    mesh_type: Render.MeshType,
+    mesh_type: MeshType,
 };
 
 pub const FrameStatsData = std.DoublyLinkedList;
@@ -85,7 +83,6 @@ pub const DebugState = struct {
 };
 
 pub const Config = struct {
-    vsync: bool,
     fps_target: i16,
 
     player_speed: f32,
@@ -98,7 +95,6 @@ pub const Config = struct {
 };
 
 pub const State = struct {
-    graphics: *Render.GraphicsState,
     config: Config,
     game_state: GameState,
     debug_state: DebugState,
@@ -109,6 +105,8 @@ pub const State = struct {
     queued_deletion_id_list: std.ArrayList(ObjectId),
 
     rng: std.Random.DefaultPrng,
+
+    mesh_collision_data: std.ArrayList(f32),
 
     frame_time_history: FrameStatsData,
     shot_timer: f32,
@@ -122,7 +120,6 @@ pub const State = struct {
         });
 
         const config = Config{
-            .vsync = true,
             .fps_target = -1,
 
             .player_speed = 0.3,
@@ -135,23 +132,8 @@ pub const State = struct {
         };
 
         self.* = .{
-            .graphics = try Render.init(allocator),
-
-            .frame_time_history = .{},
-
-            .rng = prng,
-
-            .game_state = GameState.starting,
             .config = config,
-
-            .player_name = "",
-
-            .objects = .init(allocator),
-            .queued_deletion_id_list = .empty,
-
-            .shot_timer = 0.0,
-            .asteroid_spawn_timer = 0.0,
-
+            .game_state = GameState.starting,
             .debug_state = .{
                 .enabled = false,
                 .current_render_perf_in_ns = 0,
@@ -160,9 +142,20 @@ pub const State = struct {
                 .avg_update_perf_in_ns = 0,
                 .update_tick_count = 0,
             },
-        };
 
-        self.setVSync(true);
+            .player_name = "",
+
+            .objects = .init(allocator),
+            .queued_deletion_id_list = .empty,
+
+            .rng = prng,
+
+            .mesh_collision_data = .empty,
+
+            .frame_time_history = .{},
+            .shot_timer = 0.0,
+            .asteroid_spawn_timer = 0.0,
+        };
     }
 
     pub fn deinit(self: *State, allocator: std.mem.Allocator) void {
@@ -172,11 +165,9 @@ pub const State = struct {
             const data_point: *FrameStatsDataPoint = @fieldParentPtr("node", node);
             allocator.destroy(data_point);
         }
+        self.mesh_collision_data.deinit(allocator);
         self.queued_deletion_id_list.deinit(allocator);
         self.objects.deinit();
-
-        Render.deinit(allocator, self.graphics);
-        allocator.destroy(self.graphics);
     }
 
     pub fn startGame(self: *State) void {
@@ -186,7 +177,7 @@ pub const State = struct {
                 .rot = 0.0,
                 .scale = 0.1,
                 .type = "player",
-                .mesh_type = Render.MeshType.triangle,
+                .mesh_type = MeshType.triangle,
             },
         ) catch unreachable;
 
@@ -201,7 +192,7 @@ pub const State = struct {
         self.game_state = GameState.gameover;
     }
 
-    pub fn createObject(self: *State, object: ObjectState) !ObjectId {
+    pub fn createObject(self: *State, object: ObjectState) error{OutOfMemory}!ObjectId {
         const id = next_free_object_id;
         // TODO: Find way to reuse IDs of deleted objects
         next_free_object_id += 1;
@@ -210,11 +201,11 @@ pub const State = struct {
         return id;
     }
 
-    pub fn getObjectPtr(self: *State, object_id: ObjectId) !*ObjectState {
+    pub fn getObjectPtr(self: *State, object_id: ObjectId) error{objectNotFound}!*ObjectState {
         return self.objects.getPtr(object_id) orelse error.objectNotFound;
     }
 
-    pub fn getObjectType(self: *State, object_id: u32) !ObjectType {
+    pub fn getObjectType(self: *State, object_id: u32) error{objectNotFound}!ObjectType {
         const object = try self.getObjectPtr(object_id);
         return object.type;
     }
@@ -243,27 +234,8 @@ pub const State = struct {
         }
     }
 
-    pub fn setVSync(self: *State, value: bool) void {
-        const gctx = self.graphics.gctx;
-        self.config.vsync = value;
-        if (value) {
-            if (self.debug_state.enabled) {
-                std.debug.print("VSync on\n", .{});
-            }
-            gctx.swapchain_descriptor.present_mode = zgpu.wgpu.PresentMode.fifo;
-            // zglfw.swapInterval(1);
-        } else {
-            if (self.debug_state.enabled) {
-                std.debug.print("VSync off\n", .{});
-            }
-            gctx.swapchain_descriptor.present_mode = zgpu.wgpu.PresentMode.immediate;
-            // zglfw.swapInterval(0);
-        }
-
-        gctx.swapchain.release();
-        gctx.swapchain = gctx.device.createSwapChain(
-            gctx.surface,
-            gctx.swapchain_descriptor,
-        );
+    pub fn getObjectCollisionRadius(self: *State, object_id: ObjectId) error{objectNotFound}!f32 {
+        const object = try self.getObjectPtr(object_id);
+        return self.mesh_collision_data.items[@intFromEnum(object.mesh_type)] * object.scale;
     }
 };

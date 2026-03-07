@@ -1,4 +1,5 @@
 const std = @import("std");
+const Window = @import("zglfw").Window;
 const zm = @import("zmath");
 
 const Render = @import("render.zig");
@@ -25,27 +26,39 @@ pub fn main() !void {
     try state.init(gpa);
     defer state.deinit(gpa);
 
+    const graphics = try gpa.create(Render.GraphicsState);
+    defer gpa.destroy(graphics);
+
+    try graphics.init(gpa);
+    defer graphics.deinit(gpa);
+
+    const window = graphics.window;
+
+    for (graphics.meshes.items) |mesh| {
+        try state.mesh_collision_data.append(gpa, mesh.collision_sphere_radius);
+    }
+
     var fps_timer = try std.time.Timer.start();
 
     var update_perf_timer = try std.time.Timer.start();
     var render_perf_timer = try std.time.Timer.start();
     var avg_perf_timer = try std.time.Timer.start();
 
-    while (!state.graphics.window.shouldClose() and state.graphics.window.getKey(.escape) != .press) {
+    while (!window.shouldClose() and window.getKey(.escape) != .press) {
         fps_timer.reset();
 
         if (state.debug_state.enabled) {
             update_perf_timer.reset();
         }
 
-        update(state, gpa);
+        update(gpa, state, window, graphics.gctx.stats.delta_time);
 
         if (state.debug_state.enabled) {
             state.debug_state.current_update_perf_in_ns += update_perf_timer.read();
             render_perf_timer.reset();
         }
 
-        Render.render(state, gpa);
+        Render.render(gpa, state, graphics);
 
         if (state.debug_state.enabled) {
             state.debug_state.current_render_perf_in_ns += render_perf_timer.read();
@@ -75,17 +88,18 @@ pub fn main() !void {
     }
 }
 
-fn update(state: *State.State, allocator: std.mem.Allocator) void {
+fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, delta_time: f32) void {
     if (state.game_state != State.GameState.running) {
         return;
     }
-    const delta_time = zm.f32x4s(state.graphics.gctx.stats.delta_time);
+    const delta_time_vec = zm.f32x4s(delta_time);
     const forward = [_]f32{ 0.0, 1.0 };
 
     var player_id_list: std.ArrayList(State.ObjectId) = .empty;
     defer player_id_list.deinit(allocator);
     state.getAllObjectsOfType(allocator, "player", &player_id_list) catch unreachable;
-    const player = state.getObjectPtr(player_id_list.getLast()) catch unreachable;
+    const player_id = player_id_list.getLast();
+    const player = state.getObjectPtr(player_id) catch unreachable;
 
     // Update Player
     {
@@ -102,27 +116,27 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
         // std.debug.print("Rotated Forward: x: {d}, y:{d}\n", .{ rotated_forward[0], rotated_forward[1] });
         // std.debug.print("Rotated Forward Test: x: {d}, y:{d}\n", .{ rotated_forward_test[0], rotated_forward_test[1] });
 
-        rotated_forward = move_speed * delta_time * rotated_forward;
+        rotated_forward = move_speed * delta_time_vec * rotated_forward;
 
-        if (state.graphics.window.getKey(.w) == .press) {
+        if (window.getKey(.w) == .press) {
             player.pos += rotated_forward;
             if (state.debug_state.enabled) {
                 std.debug.print("Forward: x: {d}, y:{d}\n", .{ player.pos[0], player.pos[1] });
             }
-        } else if (state.graphics.window.getKey(.s) == .press) {
+        } else if (window.getKey(.s) == .press) {
             player.pos -= rotated_forward;
             if (state.debug_state.enabled) {
                 std.debug.print("Backward: x: {d}, y:{d}\n", .{ player.pos[0], player.pos[1] });
             }
         }
 
-        const right = turn_speed * delta_time[0];
-        if (state.graphics.window.getKey(.d) == .press) {
+        const right = turn_speed * delta_time;
+        if (window.getKey(.d) == .press) {
             player.rot -= right;
             if (state.debug_state.enabled) {
                 std.debug.print("Right: rot: {d}\n", .{player.rot / std.math.pi});
             }
-        } else if (state.graphics.window.getKey(.a) == .press) {
+        } else if (window.getKey(.a) == .press) {
             player.rot += right;
             if (state.debug_state.enabled) {
                 std.debug.print("Left: rot: {d}\n", .{player.rot / std.math.pi});
@@ -131,8 +145,8 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
 
         wrapPosCoordinates(&player.pos);
 
-        state.shot_timer += delta_time[0];
-        if (state.graphics.window.getKey(.space) == .press) {
+        state.shot_timer += delta_time;
+        if (window.getKey(.space) == .press) {
             if (state.shot_timer > state.config.shot_delay) {
                 state.shot_timer = 0.0;
                 _ = state.createObject(
@@ -175,7 +189,7 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
                 object_move_speed = zm.f32x4s(state.config.shot_speed);
             }
 
-            object_rotated_forward = object_move_speed * delta_time * object_rotated_forward;
+            object_rotated_forward = object_move_speed * delta_time_vec * object_rotated_forward;
 
             object.pos += object_rotated_forward;
 
@@ -202,14 +216,12 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
         state.getAllObjectsOfType(allocator, "asteroid", &asteroid_id_list) catch unreachable;
 
         for (asteroid_id_list.items) |asteroid_id| {
-            const asteroid = state.getObjectPtr(asteroid_id) catch unreachable;
-            if (collides(state, player, asteroid)) {
+            if (collides(state, player_id, asteroid_id) catch unreachable) {
                 state.gameOver();
                 return;
             }
             for (projectile_id_list.items) |projectile_id| {
-                const projectile = state.getObjectPtr(projectile_id) catch unreachable;
-                if (collides(state, projectile, asteroid)) {
+                if (collides(state, projectile_id, asteroid_id) catch unreachable) {
                     state.removeObjectQueued(allocator, asteroid_id) catch unreachable;
                     state.removeObjectQueued(allocator, projectile_id) catch unreachable;
                     if (state.debug_state.enabled) {
@@ -222,7 +234,7 @@ fn update(state: *State.State, allocator: std.mem.Allocator) void {
 
     // Spawn asteroids in fixed time intervals
     {
-        state.asteroid_spawn_timer += delta_time[0];
+        state.asteroid_spawn_timer += delta_time;
         if (state.asteroid_spawn_timer > state.config.asteroid_spawn_delay) {
             state.asteroid_spawn_timer = 0.0;
             spawnAsteroid(state);
@@ -315,13 +327,16 @@ fn spawnAsteroid(state: *State.State) void {
     }
 }
 
-fn collides(state: *State.State, o1: *State.ObjectState, o2: *State.ObjectState) bool {
+fn collides(state: *State.State, o1_id: State.ObjectId, o2_id: State.ObjectId) error{objectNotFound}!bool {
+    const o1 = try state.getObjectPtr(o1_id);
+    const o2 = try state.getObjectPtr(o2_id);
+
     const x_dist = o2.pos[0] - o1.pos[0];
     const y_dist = o2.pos[1] - o1.pos[1];
     const distance = std.math.sqrt(x_dist * x_dist + y_dist * y_dist);
 
-    const o1_collision_radius = state.graphics.meshes.items[@intFromEnum(o1.mesh_type)].collision_sphere_radius * o1.scale;
-    const o2_collision_radius = state.graphics.meshes.items[@intFromEnum(o2.mesh_type)].collision_sphere_radius * o2.scale;
+    const o1_collision_radius = try state.getObjectCollisionRadius(o1_id);
+    const o2_collision_radius = try state.getObjectCollisionRadius(o2_id);
 
     return distance <= (o1_collision_radius + o2_collision_radius);
 }

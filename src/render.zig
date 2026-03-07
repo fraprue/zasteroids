@@ -3,37 +3,10 @@ const std = @import("std");
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const zgui = @import("zgui");
-const zm = @import("zmath");
 
 const content_dir = @import("build_options").content_dir;
 
 const State = @import("state.zig");
-
-pub const Vertex = struct {
-    position: [2]f32,
-    color: [4]f32,
-};
-
-pub const MeshType = enum(u32) { triangle, asteroid };
-
-pub const Mesh = struct {
-    index_offset: u32,
-    vertex_offset: i32,
-    num_indices: u32,
-    num_vertices: u32,
-    collision_sphere_radius: f32,
-};
-
-pub const GraphicsState = struct {
-    window: *zglfw.Window,
-    gctx: *zgpu.GraphicsContext,
-    pipeline: zgpu.RenderPipelineHandle,
-    bind_group: zgpu.BindGroupHandle,
-    vertex_buffer: zgpu.BufferHandle,
-    index_buffer: zgpu.BufferHandle,
-
-    meshes: std.ArrayList(Mesh),
-};
 
 // zig fmt: off
 const wgsl_shader =
@@ -65,170 +38,223 @@ const wgsl_shader =
 // zig fmt: on
 ;
 
+pub const Vertex = struct {
+    position: [2]f32,
+    color: [4]f32,
+};
+
+pub const MeshType = enum(u32) { triangle, asteroid };
+
+pub const Mesh = struct {
+    index_offset: u32,
+    vertex_offset: i32,
+    num_indices: u32,
+    num_vertices: u32,
+    collision_sphere_radius: f32,
+};
+
 const ShaderInputType = [4]f32; //posX, posY, rotation, scale
 
-pub fn init(allocator: std.mem.Allocator) !*GraphicsState {
-    try zglfw.init();
-    zglfw.windowHint(.client_api, .no_api);
+pub const Config = struct {
+    vsync: bool,
+};
 
-    zgui.init(allocator);
-    zgui.plot.init();
+pub const GraphicsState = struct {
+    config: Config,
+    window: *zglfw.Window,
+    gctx: *zgpu.GraphicsContext,
+    pipeline: zgpu.RenderPipelineHandle,
+    bind_group: zgpu.BindGroupHandle,
+    vertex_buffer: zgpu.BufferHandle,
+    index_buffer: zgpu.BufferHandle,
 
-    const window = try zglfw.Window.create(1400, 800, "", null, null);
-    window.setSizeLimits(400, 400, -1, -1);
-    zglfw.makeContextCurrent(window);
+    meshes: std.ArrayList(Mesh),
 
-    const gctx = try zgpu.GraphicsContext.create(
-        allocator,
-        .{
+    pub fn init(self: *GraphicsState, allocator: std.mem.Allocator) !void {
+        try zglfw.init();
+        zglfw.windowHint(.client_api, .no_api);
+
+        zgui.init(allocator);
+        zgui.plot.init();
+
+        const window = try zglfw.Window.create(1400, 800, "", null, null);
+        window.setSizeLimits(400, 400, -1, -1);
+        zglfw.makeContextCurrent(window);
+
+        const gctx = try zgpu.GraphicsContext.create(
+            allocator,
+            .{
+                .window = window,
+                .fn_getTime = @ptrCast(&zglfw.getTime),
+                .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
+                .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
+                .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
+                .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
+                .fn_getWaylandDisplay = @ptrCast(&zglfw.getWaylandDisplay),
+                .fn_getWaylandSurface = @ptrCast(&zglfw.getWaylandWindow),
+                .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
+            },
+            .{},
+        );
+        errdefer gctx.destroy(allocator);
+
+        var arena_allocator_state = std.heap.ArenaAllocator.init(allocator);
+        defer arena_allocator_state.deinit();
+        const arena_allocator = arena_allocator_state.allocator();
+
+        const full_font_path = std.fs.path.joinZ(arena_allocator, &.{ std.fs.selfExeDirPathAlloc(arena_allocator) catch unreachable, content_dir, "Roboto-Medium.ttf" }) catch unreachable;
+
+        const scale_factor = scale_factor: {
+            const scale = window.getContentScale();
+            break :scale_factor @max(scale[0], scale[1]);
+        };
+
+        _ = zgui.io.addFontFromFile(
+            full_font_path,
+            std.math.floor(16.0 * scale_factor),
+        );
+
+        zgui.backend.init(
+            window,
+            gctx.device,
+            @intFromEnum(zgpu.GraphicsContext.swapchain_format),
+            @intFromEnum(zgpu.wgpu.TextureFormat.undef),
+        );
+        zgui.getStyle().scaleAllSizes(scale_factor);
+
+        const bind_group_layout = gctx.createBindGroupLayout(&.{
+            zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
+        });
+        defer gctx.releaseResource(bind_group_layout);
+
+        const bind_group = gctx.createBindGroup(bind_group_layout, &.{
+            .{
+                .binding = 0,
+                .buffer_handle = gctx.uniforms.buffer,
+                .offset = 0,
+                .size = @sizeOf(ShaderInputType),
+            },
+        });
+
+        var meshes: std.ArrayList(Mesh) = .empty;
+        var meshes_indices: std.ArrayList(u32) = .empty;
+        defer meshes_indices.deinit(allocator);
+        var meshes_vertices: std.ArrayList(Vertex) = .empty;
+        defer meshes_vertices.deinit(allocator);
+        initMeshes(allocator, &meshes, &meshes_indices, &meshes_vertices);
+
+        const total_num_vertices = @as(u32, @intCast(meshes_vertices.items.len));
+        const total_num_indices = @as(u32, @intCast(meshes_indices.items.len));
+        // std.debug.print("Num vertices: {d}, Num indices: {d}\n", .{ total_num_vertices, total_num_indices });
+        // std.debug.print("Vertex buffer size: {d}\n", .{total_num_vertices * @sizeOf(Vertex)});
+
+        const vertex_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .vertex = true },
+            .size = total_num_vertices * @sizeOf(Vertex),
+        });
+
+        gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer).?, 0, Vertex, meshes_vertices.items);
+
+        const index_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .index = true },
+            .size = total_num_indices * @sizeOf(u32),
+        });
+        gctx.queue.writeBuffer(gctx.lookupResource(index_buffer).?, 0, u32, meshes_indices.items);
+
+        const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout});
+        defer gctx.releaseResource(pipeline_layout);
+
+        const pipeline = pipeline: {
+            const shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_shader, "shader");
+            defer shader_module.release();
+
+            const color_targets = [_]zgpu.wgpu.ColorTargetState{.{
+                .format = zgpu.GraphicsContext.swapchain_format,
+            }};
+
+            const vertex_attributes = [_]zgpu.wgpu.VertexAttribute{
+                .{ .format = .float32x2, .offset = 0, .shader_location = 0 },
+                .{ .format = .float32x4, .offset = @offsetOf(Vertex, "color"), .shader_location = 1 },
+            };
+            const vertex_buffers = [_]zgpu.wgpu.VertexBufferLayout{.{
+                .array_stride = @sizeOf(Vertex),
+                .attribute_count = vertex_attributes.len,
+                .attributes = &vertex_attributes,
+            }};
+
+            const pipeline_descriptor = zgpu.wgpu.RenderPipelineDescriptor{
+                .vertex = zgpu.wgpu.VertexState{
+                    .module = shader_module,
+                    .entry_point = "vs_main",
+                    .buffer_count = vertex_buffers.len,
+                    .buffers = &vertex_buffers,
+                },
+                .primitive = zgpu.wgpu.PrimitiveState{
+                    .front_face = .ccw,
+                    .cull_mode = .none,
+                    .topology = .triangle_list,
+                },
+                .fragment = &zgpu.wgpu.FragmentState{
+                    .module = shader_module,
+                    .entry_point = "fs_main",
+                    .target_count = color_targets.len,
+                    .targets = &color_targets,
+                },
+            };
+            break :pipeline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
+        };
+
+        const config = Config{
+            .vsync = true,
+        };
+
+        self.* = .{
+            .config = config,
             .window = window,
-            .fn_getTime = @ptrCast(&zglfw.getTime),
-            .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
-            .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
-            .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
-            .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
-            .fn_getWaylandDisplay = @ptrCast(&zglfw.getWaylandDisplay),
-            .fn_getWaylandSurface = @ptrCast(&zglfw.getWaylandWindow),
-            .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
-        },
-        .{},
-    );
-    errdefer gctx.destroy(allocator);
+            .gctx = gctx,
+            .pipeline = pipeline,
+            .bind_group = bind_group,
+            .vertex_buffer = vertex_buffer,
+            .index_buffer = index_buffer,
 
-    var arena_allocator_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_allocator_state.deinit();
-    const arena_allocator = arena_allocator_state.allocator();
-
-    const full_font_path = std.fs.path.joinZ(arena_allocator, &.{ std.fs.selfExeDirPathAlloc(arena_allocator) catch unreachable, content_dir, "Roboto-Medium.ttf" }) catch unreachable;
-
-    const scale_factor = scale_factor: {
-        const scale = window.getContentScale();
-        break :scale_factor @max(scale[0], scale[1]);
-    };
-
-    _ = zgui.io.addFontFromFile(
-        full_font_path,
-        std.math.floor(16.0 * scale_factor),
-    );
-
-    zgui.backend.init(
-        window,
-        gctx.device,
-        @intFromEnum(zgpu.GraphicsContext.swapchain_format),
-        @intFromEnum(zgpu.wgpu.TextureFormat.undef),
-    );
-    zgui.getStyle().scaleAllSizes(scale_factor);
-
-    const bind_group_layout = gctx.createBindGroupLayout(&.{
-        zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
-    });
-    defer gctx.releaseResource(bind_group_layout);
-
-    const bind_group = gctx.createBindGroup(bind_group_layout, &.{
-        .{
-            .binding = 0,
-            .buffer_handle = gctx.uniforms.buffer,
-            .offset = 0,
-            .size = @sizeOf(ShaderInputType),
-        },
-    });
-
-    var meshes: std.ArrayList(Mesh) = .empty;
-    var meshes_indices: std.ArrayList(u32) = .empty;
-    defer meshes_indices.deinit(allocator);
-    var meshes_vertices: std.ArrayList(Vertex) = .empty;
-    defer meshes_vertices.deinit(allocator);
-    initMeshes(allocator, &meshes, &meshes_indices, &meshes_vertices);
-
-    const total_num_vertices = @as(u32, @intCast(meshes_vertices.items.len));
-    const total_num_indices = @as(u32, @intCast(meshes_indices.items.len));
-    // std.debug.print("Num vertices: {d}, Num indices: {d}\n", .{ total_num_vertices, total_num_indices });
-    // std.debug.print("Vertex buffer size: {d}\n", .{total_num_vertices * @sizeOf(Vertex)});
-
-    const vertex_buffer = gctx.createBuffer(.{
-        .usage = .{ .copy_dst = true, .vertex = true },
-        .size = total_num_vertices * @sizeOf(Vertex),
-    });
-
-    gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer).?, 0, Vertex, meshes_vertices.items);
-
-    const index_buffer = gctx.createBuffer(.{
-        .usage = .{ .copy_dst = true, .index = true },
-        .size = total_num_indices * @sizeOf(u32),
-    });
-    gctx.queue.writeBuffer(gctx.lookupResource(index_buffer).?, 0, u32, meshes_indices.items);
-
-    const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout});
-    defer gctx.releaseResource(pipeline_layout);
-
-    const pipeline = pipeline: {
-        const shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_shader, "shader");
-        defer shader_module.release();
-
-        const color_targets = [_]zgpu.wgpu.ColorTargetState{.{
-            .format = zgpu.GraphicsContext.swapchain_format,
-        }};
-
-        const vertex_attributes = [_]zgpu.wgpu.VertexAttribute{
-            .{ .format = .float32x2, .offset = 0, .shader_location = 0 },
-            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "color"), .shader_location = 1 },
+            .meshes = meshes,
         };
-        const vertex_buffers = [_]zgpu.wgpu.VertexBufferLayout{.{
-            .array_stride = @sizeOf(Vertex),
-            .attribute_count = vertex_attributes.len,
-            .attributes = &vertex_attributes,
-        }};
 
-        const pipeline_descriptor = zgpu.wgpu.RenderPipelineDescriptor{
-            .vertex = zgpu.wgpu.VertexState{
-                .module = shader_module,
-                .entry_point = "vs_main",
-                .buffer_count = vertex_buffers.len,
-                .buffers = &vertex_buffers,
-            },
-            .primitive = zgpu.wgpu.PrimitiveState{
-                .front_face = .ccw,
-                .cull_mode = .none,
-                .topology = .triangle_list,
-            },
-            .fragment = &zgpu.wgpu.FragmentState{
-                .module = shader_module,
-                .entry_point = "fs_main",
-                .target_count = color_targets.len,
-                .targets = &color_targets,
-            },
-        };
-        break :pipeline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
-    };
+        self.setVSync(true);
+    }
 
-    const graphics = try allocator.create(GraphicsState);
-    graphics.* = .{
-        .window = window,
-        .gctx = gctx,
-        .pipeline = pipeline,
-        .bind_group = bind_group,
-        .vertex_buffer = vertex_buffer,
-        .index_buffer = index_buffer,
+    pub fn deinit(self: *GraphicsState, allocator: std.mem.Allocator) void {
+        self.window.destroy();
+        self.gctx.releaseResource(self.pipeline);
+        self.gctx.releaseResource(self.bind_group);
+        self.gctx.destroy(allocator);
 
-        .meshes = meshes,
-    };
+        self.meshes.deinit(allocator);
 
-    return graphics;
-}
+        zgui.backend.deinit();
+        zgui.plot.deinit();
+        zgui.deinit();
+        zglfw.terminate();
+    }
 
-pub fn deinit(allocator: std.mem.Allocator, graphics: *GraphicsState) void {
-    graphics.window.destroy();
-    graphics.gctx.releaseResource(graphics.pipeline);
-    graphics.gctx.releaseResource(graphics.bind_group);
-    graphics.gctx.destroy(allocator);
+    pub fn setVSync(self: *GraphicsState, value: bool) void {
+        const gctx = self.gctx;
+        self.config.vsync = value;
+        if (value) {
+            gctx.swapchain_descriptor.present_mode = zgpu.wgpu.PresentMode.fifo;
+            // zglfw.swapInterval(1);
+        } else {
+            gctx.swapchain_descriptor.present_mode = zgpu.wgpu.PresentMode.immediate;
+            // zglfw.swapInterval(0);
+        }
 
-    graphics.meshes.deinit(allocator);
-
-    zgui.backend.deinit();
-    zgui.plot.deinit();
-    zgui.deinit();
-    zglfw.terminate();
-}
+        gctx.swapchain.release();
+        gctx.swapchain = gctx.device.createSwapChain(
+            gctx.surface,
+            gctx.swapchain_descriptor,
+        );
+    }
+};
 
 fn initMeshes(
     allocator: std.mem.Allocator,
@@ -310,8 +336,8 @@ fn appendMesh(
     meshes_vertices.appendSlice(allocator, vertex_data) catch unreachable;
 }
 
-pub fn render(state: *State.State, allocator: std.mem.Allocator) void {
-    const gctx = state.graphics.gctx;
+pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *GraphicsState) void {
+    const gctx = graphics.gctx;
 
     const window_name = "My First Game";
     const window_width = gctx.swapchain_descriptor.width;
@@ -325,7 +351,7 @@ pub fn render(state: *State.State, allocator: std.mem.Allocator) void {
     }, 0) catch unreachable;
     defer allocator.free(window_title);
 
-    zglfw.setWindowTitle(state.graphics.window, window_title);
+    zglfw.setWindowTitle(graphics.window, window_title);
 
     zglfw.pollEvents();
 
@@ -442,9 +468,9 @@ pub fn render(state: *State.State, allocator: std.mem.Allocator) void {
             });
         }
 
-        var vsync = state.config.vsync;
+        var vsync = graphics.config.vsync;
         if (zgui.checkbox("VSync", .{ .v = &vsync })) {
-            state.setVSync(vsync);
+            graphics.setVSync(vsync);
         }
 
         var limit_fps = (state.config.fps_target > 0);
@@ -498,7 +524,7 @@ pub fn render(state: *State.State, allocator: std.mem.Allocator) void {
             }
             zgui.sameLine(.{});
             if (zgui.button("Quit", .{})) {
-                state.graphics.window.setShouldClose(true);
+                graphics.window.setShouldClose(true);
             }
         }
         zgui.end();
@@ -517,7 +543,7 @@ pub fn render(state: *State.State, allocator: std.mem.Allocator) void {
             }
             zgui.sameLine(.{});
             if (zgui.button("Quit", .{})) {
-                state.graphics.window.setShouldClose(true);
+                graphics.window.setShouldClose(true);
             }
         }
         zgui.end();
@@ -551,15 +577,15 @@ pub fn render(state: *State.State, allocator: std.mem.Allocator) void {
                 pass.release();
             }
 
-            const pipeline = gctx.lookupResource(state.graphics.pipeline) orelse break :object_pass;
+            const pipeline = gctx.lookupResource(graphics.pipeline) orelse break :object_pass;
             pass.setPipeline(pipeline);
 
             var objects_iterator = state.objects.iterator();
             while (objects_iterator.next()) |render_object_entry| {
                 const render_object = render_object_entry.value_ptr;
-                const vb_info = gctx.lookupResourceInfo(state.graphics.vertex_buffer) orelse break :object_pass;
-                const ib_info = gctx.lookupResourceInfo(state.graphics.index_buffer) orelse break :object_pass;
-                const bind_group = gctx.lookupResource(state.graphics.bind_group) orelse break :object_pass;
+                const vb_info = gctx.lookupResourceInfo(graphics.vertex_buffer) orelse break :object_pass;
+                const ib_info = gctx.lookupResourceInfo(graphics.index_buffer) orelse break :object_pass;
+                const bind_group = gctx.lookupResource(graphics.bind_group) orelse break :object_pass;
 
                 {
                     pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
@@ -582,10 +608,10 @@ pub fn render(state: *State.State, allocator: std.mem.Allocator) void {
                     );
                     const mesh_id = @intFromEnum(render_object.mesh_type);
                     pass.drawIndexed(
-                        state.graphics.meshes.items[mesh_id].num_indices,
+                        graphics.meshes.items[mesh_id].num_indices,
                         1,
-                        state.graphics.meshes.items[mesh_id].index_offset,
-                        state.graphics.meshes.items[mesh_id].vertex_offset,
+                        graphics.meshes.items[mesh_id].index_offset,
+                        graphics.meshes.items[mesh_id].vertex_offset,
                         0,
                     );
                 }
