@@ -6,7 +6,9 @@ You are the colorful triangle in the middle of the screen. You can move with the
 # Currently missing features
 - Asteroids to split up when being hit with a projectile
 - Peristent high score
+- Sound!
 - Configuration of key bindings
+- Controller support
 - Exposing game config via file
 
 # Currently known issues
