@@ -341,4 +341,41 @@ fn collides(state: *State.State, o1_id: State.ObjectId, o2_id: State.ObjectId) e
     return distance <= (o1_collision_radius + o2_collision_radius);
 }
 
-// TODO: Add collision test
+test "object collision" {
+    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
+    const gpa = gpa_state.allocator();
+    defer std.testing.expect(gpa_state.deinit() == std.heap.Check.ok) catch unreachable;
+
+    const state = try gpa.create(State.State);
+    defer gpa.destroy(state);
+
+    try state.init(gpa);
+    defer state.deinit(gpa);
+
+    try state.mesh_collision_data.append(gpa, 0.1);
+
+    const o1_id = try state.createObject(State.ObjectState{
+        .pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 },
+        .rot = 0.0,
+        .scale = 0.1,
+        .type = "",
+        .mesh_type = Render.MeshType.triangle,
+    });
+    const o2_id = try state.createObject(State.ObjectState{
+        .pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 },
+        .rot = 0.0,
+        .scale = 0.1,
+        .type = "",
+        .mesh_type = Render.MeshType.triangle,
+    });
+    const o3_id = try state.createObject(State.ObjectState{
+        .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .rot = 0.0,
+        .scale = 0.1,
+        .type = "",
+        .mesh_type = Render.MeshType.triangle,
+    });
+
+    try std.testing.expect(try collides(state, o1_id, o2_id));
+    try std.testing.expect(!try collides(state, o1_id, o3_id));
+}
