@@ -214,12 +214,13 @@ pub const State = struct {
         _ = self.objects.remove(object_id);
     }
 
-    pub fn removeObjectQueued(self: *State, allocator: std.mem.Allocator, object_id: ObjectId) !void {
+    pub fn removeObjectQueued(self: *State, allocator: std.mem.Allocator, object_id: ObjectId) error{OutOfMemory}!void {
         try self.queued_deletion_id_list.append(allocator, object_id);
     }
 
     pub fn removeQueuedObjects(self: *State) void {
-        for (self.queued_deletion_id_list.items) |object_id| {
+        while (self.queued_deletion_id_list.items.len > 0) {
+            const object_id = self.queued_deletion_id_list.pop().?;
             self.removeObject(object_id);
         }
     }
@@ -239,3 +240,160 @@ pub const State = struct {
         return self.mesh_collision_data.items[@intFromEnum(object.mesh_type)] * object.scale;
     }
 };
+
+test "create object" {
+    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
+    const gpa = gpa_state.allocator();
+    defer std.testing.expect(gpa_state.deinit() == std.heap.Check.ok) catch unreachable;
+
+    const state = try gpa.create(State);
+    defer gpa.destroy(state);
+
+    try state.init(gpa);
+    defer state.deinit(gpa);
+
+    const object = ObjectState{
+        .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .rot = 0.5,
+        .scale = 0.1,
+        .type = "test_type",
+        .mesh_type = MeshType.triangle,
+    };
+    const o1_id = try state.createObject(object);
+
+    std.debug.assert(state.objects.count() == 1);
+
+    const state_object = state.getObjectPtr(o1_id) catch unreachable;
+    const object_type = state.getObjectType(o1_id) catch unreachable;
+
+    try std.testing.expect(zm.all(zm.isNearEqual(
+        state_object.pos,
+        object.pos,
+        zm.f32x4s(std.math.floatEps(f32)),
+    ), 4));
+    try std.testing.expect(state_object.rot == object.rot);
+    try std.testing.expect(state_object.scale == object.scale);
+    try std.testing.expect(state_object.mesh_type == object.mesh_type);
+    try std.testing.expect(std.mem.eql(u8, object_type, object.type));
+}
+
+test "remove object" {
+    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
+    const gpa = gpa_state.allocator();
+    defer std.testing.expect(gpa_state.deinit() == std.heap.Check.ok) catch unreachable;
+
+    const state = try gpa.create(State);
+    defer gpa.destroy(state);
+
+    try state.init(gpa);
+    defer state.deinit(gpa);
+
+    const o1_id = try state.createObject(ObjectState{
+        .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .rot = 0.5,
+        .scale = 0.1,
+        .type = "test_type",
+        .mesh_type = MeshType.triangle,
+    });
+
+    std.debug.assert(state.objects.count() == 1);
+
+    state.removeObject(o1_id);
+
+    try std.testing.expect(state.objects.count() == 0);
+}
+
+test "remove object queued" {
+    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
+    const gpa = gpa_state.allocator();
+    defer std.testing.expect(gpa_state.deinit() == std.heap.Check.ok) catch unreachable;
+
+    const state = try gpa.create(State);
+    defer gpa.destroy(state);
+
+    try state.init(gpa);
+    defer state.deinit(gpa);
+
+    const o1_id = try state.createObject(ObjectState{
+        .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .rot = 0.5,
+        .scale = 0.1,
+        .type = "test_type",
+        .mesh_type = MeshType.triangle,
+    });
+
+    std.debug.assert(state.objects.count() == 1);
+
+    try state.removeObjectQueued(gpa, o1_id);
+
+    try std.testing.expect(state.objects.count() == 1);
+    try std.testing.expect(state.queued_deletion_id_list.items.len == 1);
+
+    state.removeQueuedObjects();
+
+    try std.testing.expect(state.objects.count() == 0);
+    try std.testing.expect(state.queued_deletion_id_list.items.len == 0);
+}
+
+test "get all objects of type" {
+    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
+    const gpa = gpa_state.allocator();
+    defer std.testing.expect(gpa_state.deinit() == std.heap.Check.ok) catch unreachable;
+
+    const state = try gpa.create(State);
+    defer gpa.destroy(state);
+
+    try state.init(gpa);
+    defer state.deinit(gpa);
+
+    const o1_id = try state.createObject(ObjectState{
+        .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .rot = 0.5,
+        .scale = 0.1,
+        .type = "test_type_1",
+        .mesh_type = MeshType.triangle,
+    });
+    _ = try state.createObject(ObjectState{
+        .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .rot = 0.5,
+        .scale = 0.1,
+        .type = "test_type_2",
+        .mesh_type = MeshType.triangle,
+    });
+
+    std.debug.assert(state.objects.count() == 2);
+
+    var object_id_list: std.ArrayList(ObjectId) = .empty;
+    defer object_id_list.deinit(gpa);
+    try state.getAllObjectsOfType(gpa, "test_type_1", &object_id_list);
+
+    try std.testing.expect(object_id_list.items.len == 1);
+    try std.testing.expect(object_id_list.items[0] == o1_id);
+}
+
+test "get collision radius" {
+    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
+    const gpa = gpa_state.allocator();
+    defer std.testing.expect(gpa_state.deinit() == std.heap.Check.ok) catch unreachable;
+
+    const state = try gpa.create(State);
+    defer gpa.destroy(state);
+
+    try state.init(gpa);
+    defer state.deinit(gpa);
+
+    const mesh_collision_radius = 0.5;
+
+    try state.mesh_collision_data.append(gpa, mesh_collision_radius);
+
+    const object = ObjectState{
+        .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .rot = 0.5,
+        .scale = 0.1,
+        .type = "test_type_1",
+        .mesh_type = MeshType.triangle,
+    };
+    const o1_id = try state.createObject(object);
+
+    try std.testing.expect(try state.getObjectCollisionRadius(o1_id) == mesh_collision_radius * object.scale);
+}
