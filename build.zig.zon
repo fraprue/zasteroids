@@ -34,8 +34,8 @@
             .hash = "zpool-0.11.0-dev-bG692YNDAQAyX1pDZKrJrDmorwVqVNTZbbH-zpoDQO-N",
         },
         .zgpu = .{
-            .url = "git+https://github.com/zig-gamedev/zgpu.git#b582a62c13af1a8228f72c47ea2eaa21259760eb",
-            .hash = "zgpu-0.12.0-dev-nqFT5IChCACWEis11EjrBQGaA0QXEqXfsi1e6cF3_AL3",
+            .url = "git+https://github.com/zig-gamedev/zgpu.git#c512b60c1f0cd438dcc6297083d0e3d91ad5e717",
+            .hash = "zgpu-0.12.0-dev-nqFT5OOmCABcwCeEje63Wohd7SqQ73CbPqZzmuqArpgF",
         },
         .dawn_x86_64_windows_gnu = .{
             .url = "https://github.com/michal-z/webgpu_dawn-x86_64-windows-gnu/archive/d3a68014e6b6b53fd330a0ccba99e4dcfffddae5.tar.gz",

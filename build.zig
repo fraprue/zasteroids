@@ -58,6 +58,12 @@ pub fn build(b: *std.Build) void {
         @import("zgpu").addLibraryPathsTo(exe);
         const zgpu = b.dependency("zgpu", .{});
         exe.root_module.addImport("zgpu", zgpu.module("root"));
+
+        // Adds platform-specific library search paths and links the
+        // prebuilt dawn library to the executable.
+        @import("zgpu").addLibraryPathsTo(exe);
+
+        // Link the zdawn C/C++ wrapper artifact.
         exe.root_module.linkLibrary(zgpu.artifact("zdawn"));
     }
 
