@@ -99,14 +99,14 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
     defer player_id_list.deinit(allocator);
     state.getAllObjectsOfType(allocator, "player", &player_id_list) catch unreachable;
     const player_id = player_id_list.getLast();
-    const player = state.getObjectPtr(player_id) catch unreachable;
+    const player_ptr = state.getObjectPtr(player_id) catch unreachable;
 
     // Update Player
     {
         const move_speed = zm.f32x4s(state.config.player_speed);
         const turn_speed = 2.0;
 
-        const sincos = zm.sincos(player.rot);
+        const sincos = zm.sincos(player_ptr.rot);
         var rotated_forward = zm.Vec{ 0.0, 0.0, 0.0, 0.0 };
         rotated_forward[0] = forward[0] * sincos[1] - forward[1] * sincos[0];
         rotated_forward[1] = forward[0] * sincos[0] + forward[1] * sincos[1];
@@ -119,40 +119,40 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
         rotated_forward = move_speed * delta_time_vec * rotated_forward;
 
         if (window.getKey(.w) == .press) {
-            player.pos += rotated_forward;
+            player_ptr.pos += rotated_forward;
             if (state.debug_state.enabled) {
-                std.debug.print("Forward: x: {d}, y:{d}\n", .{ player.pos[0], player.pos[1] });
+                std.debug.print("Forward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
             }
         } else if (window.getKey(.s) == .press) {
-            player.pos -= rotated_forward;
+            player_ptr.pos -= rotated_forward;
             if (state.debug_state.enabled) {
-                std.debug.print("Backward: x: {d}, y:{d}\n", .{ player.pos[0], player.pos[1] });
+                std.debug.print("Backward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
             }
         }
 
         const right = turn_speed * delta_time;
         if (window.getKey(.d) == .press) {
-            player.rot -= right;
+            player_ptr.rot -= right;
             if (state.debug_state.enabled) {
-                std.debug.print("Right: rot: {d}\n", .{player.rot / std.math.pi});
+                std.debug.print("Right: rot: {d}\n", .{player_ptr.rot / std.math.pi});
             }
         } else if (window.getKey(.a) == .press) {
-            player.rot += right;
+            player_ptr.rot += right;
             if (state.debug_state.enabled) {
-                std.debug.print("Left: rot: {d}\n", .{player.rot / std.math.pi});
+                std.debug.print("Left: rot: {d}\n", .{player_ptr.rot / std.math.pi});
             }
         }
 
-        wrapPosCoordinates(&player.pos);
+        wrapPosCoordinates(&player_ptr.pos);
 
         state.shot_timer += delta_time;
         if (window.getKey(.space) == .press) {
             if (state.shot_timer > state.config.shot_delay) {
                 state.shot_timer = 0.0;
                 _ = state.createObject(
-                    State.ObjectState{
-                        .pos = player.pos,
-                        .rot = player.rot,
+                    .{
+                        .pos = player_ptr.pos,
+                        .rot = player_ptr.rot,
                         .scale = 0.02,
                         .type = "projectile",
                         .mesh_type = Render.MeshType.triangle,
@@ -160,6 +160,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
                 ) catch unreachable;
 
                 if (state.debug_state.enabled) {
+                    const player = state.getObject(player_id) catch unreachable; //player_ptr is invalid, since we created a new object
                     std.debug.print("Created Projectile at pos: {d}, {d}, rot: {d}\n", .{ player.pos[0], player.pos[1], player.rot });
                 }
             }
@@ -222,11 +223,11 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
             }
             for (projectile_id_list.items) |projectile_id| {
                 if (collides(state, projectile_id, asteroid_id) catch unreachable) {
-                    state.removeObjectQueued(allocator, asteroid_id) catch unreachable;
-                    state.removeObjectQueued(allocator, projectile_id) catch unreachable;
                     if (state.debug_state.enabled) {
                         std.debug.print("Detected collision between projectile {d} and asteroid {d}\n", .{ projectile_id, asteroid_id });
                     }
+                    splitAsteroid(allocator, state, asteroid_id) catch unreachable;
+                    state.removeObjectQueued(allocator, projectile_id) catch unreachable;
                 }
             }
         }
@@ -313,11 +314,13 @@ fn spawnAsteroid(state: *State.State) void {
         },
     }
 
+    const rand_scale = @as(f32, @floatFromInt(state.rng.random().intRangeAtMost(i16, 50, 200))) / 1000.0;
+
     _ = state.createObject(
         .{
             .pos = pos,
             .rot = rot,
-            .scale = 0.1,
+            .scale = rand_scale,
             .type = "asteroid",
             .mesh_type = Render.MeshType.asteroid,
         },
@@ -325,6 +328,44 @@ fn spawnAsteroid(state: *State.State) void {
     if (state.debug_state.enabled) {
         std.debug.print("Created Asteroid at edge: {}, pos: {d}, {d}, rot: {d}\n", .{ screen_edge, pos[0], pos[1], rot });
     }
+}
+
+fn splitAsteroid(allocator: std.mem.Allocator, state: *State.State, asteroid_id: State.ObjectId) error{OutOfMemory}!void {
+    const asteroid = state.getObject(asteroid_id) catch unreachable;
+
+    if (asteroid.scale >= state.config.asteroid_split_threshold) {
+        const spread_angle = comptime std.math.degreesToRadians(20);
+        const splitted_asteroid_1 = State.ObjectState{
+            .pos = asteroid.pos,
+            .rot = asteroid.rot - spread_angle,
+            .scale = asteroid.scale * 0.5,
+            .type = "asteroid",
+            .mesh_type = Render.MeshType.asteroid,
+        };
+        _ = try state.createObject(splitted_asteroid_1);
+        if (state.debug_state.enabled) {
+            std.debug.print("Created Asteroid by splitting asteroid {}, pos: {d}, {d}, rot: {d}\n", .{
+                asteroid_id,
+                splitted_asteroid_1.pos[0],
+                splitted_asteroid_1.pos[1],
+                splitted_asteroid_1.rot,
+            });
+        }
+
+        var splitted_asteroid_2 = splitted_asteroid_1;
+        splitted_asteroid_2.rot = asteroid.rot + spread_angle;
+
+        _ = try state.createObject(splitted_asteroid_2);
+        if (state.debug_state.enabled) {
+            std.debug.print("Created Asteroid by splitting asteroid {}, pos: {d}, {d}, rot: {d}\n", .{
+                asteroid_id,
+                splitted_asteroid_2.pos[0],
+                splitted_asteroid_2.pos[1],
+                splitted_asteroid_2.rot,
+            });
+        }
+    }
+    try state.removeObjectQueued(allocator, asteroid_id);
 }
 
 fn collides(state: *State.State, o1_id: State.ObjectId, o2_id: State.ObjectId) error{objectNotFound}!bool {
@@ -354,21 +395,21 @@ test "object collision" {
 
     try state.mesh_collision_data.append(gpa, 0.1);
 
-    const o1_id = try state.createObject(State.ObjectState{
+    const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 },
         .rot = 0.0,
         .scale = 0.1,
         .type = "",
         .mesh_type = Render.MeshType.triangle,
     });
-    const o2_id = try state.createObject(State.ObjectState{
+    const o2_id = try state.createObject(.{
         .pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 },
         .rot = 0.0,
         .scale = 0.1,
         .type = "",
         .mesh_type = Render.MeshType.triangle,
     });
-    const o3_id = try state.createObject(State.ObjectState{
+    const o3_id = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
         .rot = 0.0,
         .scale = 0.1,

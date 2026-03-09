@@ -92,6 +92,7 @@ pub const Config = struct {
 
     asteroid_spawn_delay: f32,
     asteroid_speed: f32,
+    asteroid_split_threshold: f32,
 };
 
 pub const State = struct {
@@ -129,6 +130,7 @@ pub const State = struct {
 
             .asteroid_spawn_delay = 3.0,
             .asteroid_speed = 0.2,
+            .asteroid_split_threshold = 0.07,
         };
 
         self.* = .{
@@ -203,6 +205,10 @@ pub const State = struct {
 
     pub fn getObjectPtr(self: *State, object_id: ObjectId) error{objectNotFound}!*ObjectState {
         return self.objects.getPtr(object_id) orelse error.objectNotFound;
+    }
+
+    pub fn getObject(self: *State, object_id: ObjectId) error{objectNotFound}!ObjectState {
+        return self.objects.get(object_id) orelse error.objectNotFound;
     }
 
     pub fn getObjectType(self: *State, object_id: u32) error{objectNotFound}!ObjectType {
@@ -288,7 +294,7 @@ test "remove object" {
     try state.init(gpa);
     defer state.deinit(gpa);
 
-    const o1_id = try state.createObject(ObjectState{
+    const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
         .rot = 0.5,
         .scale = 0.1,
@@ -314,7 +320,7 @@ test "remove object queued" {
     try state.init(gpa);
     defer state.deinit(gpa);
 
-    const o1_id = try state.createObject(ObjectState{
+    const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
         .rot = 0.5,
         .scale = 0.1,
@@ -346,14 +352,14 @@ test "get all objects of type" {
     try state.init(gpa);
     defer state.deinit(gpa);
 
-    const o1_id = try state.createObject(ObjectState{
+    const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
         .rot = 0.5,
         .scale = 0.1,
         .type = "test_type_1",
         .mesh_type = MeshType.triangle,
     });
-    _ = try state.createObject(ObjectState{
+    _ = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
         .rot = 0.5,
         .scale = 0.1,

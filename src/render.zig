@@ -466,6 +466,11 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
                 .min = 0.01,
                 .max = 1.0,
             });
+            _ = zgui.sliderFloat("Asteroid Split Threshold", .{
+                .v = &state.config.asteroid_split_threshold,
+                .min = 0.01,
+                .max = 1.0,
+            });
         }
 
         var vsync = graphics.config.vsync;
