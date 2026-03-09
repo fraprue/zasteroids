@@ -4,7 +4,6 @@ A personal learning project for Zig and basic game development, based on the 197
 You are the colorful triangle in the middle of the screen. You can move with the WASD keys and shoot with Spacebar.
 
 # Currently missing features
-- Asteroids to split up when being hit with a projectile
 - Peristent high score
 - Sound!
 - Configuration of key bindings
