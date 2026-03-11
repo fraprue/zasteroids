@@ -1,6 +1,9 @@
 const std = @import("std");
 const Window = @import("zglfw").Window;
+const zglfw = @import("zglfw");
 const zm = @import("zmath");
+
+const content_dir = @import("build_options").content_dir;
 
 const Render = @import("render.zig");
 const State = @import("state.zig");
@@ -38,6 +41,41 @@ pub fn main() !void {
         try state.mesh_collision_data.append(gpa, mesh.collision_sphere_radius);
     }
 
+    {
+        var arena_allocator_state = std.heap.ArenaAllocator.init(gpa);
+        defer arena_allocator_state.deinit();
+        const arena_allocator = arena_allocator_state.allocator();
+
+        const full_gamepad_mapping_path = std.fs.path.joinZ(arena_allocator, &.{ std.fs.selfExeDirPathAlloc(arena_allocator) catch unreachable, content_dir, "gamecontrollerdb.txt" }) catch unreachable;
+        const mapping_content = try std.fs.cwd().readFileAlloc(arena_allocator, full_gamepad_mapping_path, 1048576);
+        const mapping_content_sentinel = std.fmt.allocPrintSentinel(arena_allocator, "{s}", .{
+            mapping_content,
+        }, 0) catch unreachable;
+
+        const success = zglfw.Gamepad.updateMappings(mapping_content_sentinel);
+        if (!success) {
+            @panic("failed to update gamepad mappings");
+        }
+    }
+
+    for (0..zglfw.Joystick.maximum_supported) |jid| {
+        const joystick: zglfw.Joystick = @enumFromInt(jid);
+        if (joystick.isPresent()) {
+            state.registered_joystick = joystick;
+            state.controller_type = State.ControllerType.gamepad;
+            const joystick_guid = joystick.getGuid() catch "n/a";
+            state.debug_state.registered_gamepad_guid = try gpa.alloc(u8, joystick_guid.len);
+            @memcpy(state.debug_state.registered_gamepad_guid, joystick_guid[0..]);
+            if (joystick.asGamepad()) |gamepad| {
+                const gamepad_name = gamepad.getName();
+                state.debug_state.registered_gamepad_name = try gpa.alloc(u8, gamepad_name.len);
+                @memcpy(state.debug_state.registered_gamepad_name, gamepad_name[0..]);
+            } else {
+                @panic("Mapped gamepad: Missing mapping. Is GUID found in gamecontrollerdb.txt?");
+            }
+        }
+    }
+
     var fps_timer = try std.time.Timer.start();
 
     var update_perf_timer = try std.time.Timer.start();
@@ -50,6 +88,8 @@ pub fn main() !void {
         if (state.debug_state.enabled) {
             update_perf_timer.reset();
         }
+
+        zglfw.pollEvents();
 
         update(gpa, state, window, graphics.gctx.stats.delta_time);
 
@@ -92,6 +132,9 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
     if (state.game_state != State.GameState.running) {
         return;
     }
+
+    state.shot_timer += delta_time;
+
     const delta_time_vec = zm.f32x4s(delta_time);
     const forward = [_]f32{ 0.0, 1.0 };
 
@@ -104,7 +147,8 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
     // Update Player
     {
         const move_speed = zm.f32x4s(state.config.player_speed);
-        const turn_speed = 2.0;
+        const turn_speed = state.config.player_turn_speed;
+        const right = turn_speed * delta_time;
 
         const sincos = zm.sincos(player_ptr.rot);
         var rotated_forward = zm.Vec{ 0.0, 0.0, 0.0, 0.0 };
@@ -118,53 +162,116 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
 
         rotated_forward = move_speed * delta_time_vec * rotated_forward;
 
-        if (window.getKey(.w) == .press) {
-            player_ptr.pos += rotated_forward;
-            if (state.debug_state.enabled) {
-                std.debug.print("Forward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
-            }
-        } else if (window.getKey(.s) == .press) {
-            player_ptr.pos -= rotated_forward;
-            if (state.debug_state.enabled) {
-                std.debug.print("Backward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
-            }
-        }
-
-        const right = turn_speed * delta_time;
-        if (window.getKey(.d) == .press) {
-            player_ptr.rot -= right;
-            if (state.debug_state.enabled) {
-                std.debug.print("Right: rot: {d}\n", .{player_ptr.rot / std.math.pi});
-            }
-        } else if (window.getKey(.a) == .press) {
-            player_ptr.rot += right;
-            if (state.debug_state.enabled) {
-                std.debug.print("Left: rot: {d}\n", .{player_ptr.rot / std.math.pi});
-            }
-        }
-
-        wrapPosCoordinates(&player_ptr.pos);
-
-        state.shot_timer += delta_time;
-        if (window.getKey(.space) == .press) {
-            if (state.shot_timer > state.config.shot_delay) {
-                state.shot_timer = 0.0;
-                _ = state.createObject(
-                    .{
-                        .pos = player_ptr.pos,
-                        .rot = player_ptr.rot,
-                        .scale = 0.02,
-                        .type = "projectile",
-                        .mesh_type = Render.MeshType.triangle,
-                    },
-                ) catch unreachable;
-
+        // Handle keyboard input
+        {
+            if (window.getKey(.w) == .press) {
+                player_ptr.pos += rotated_forward;
                 if (state.debug_state.enabled) {
-                    const player = state.getObject(player_id) catch unreachable; //player_ptr is invalid, since we created a new object
-                    std.debug.print("Created Projectile at pos: {d}, {d}, rot: {d}\n", .{ player.pos[0], player.pos[1], player.rot });
+                    std.debug.print("Forward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
+                }
+            } else if (window.getKey(.s) == .press) {
+                player_ptr.pos -= rotated_forward;
+                if (state.debug_state.enabled) {
+                    std.debug.print("Backward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
                 }
             }
+
+            if (window.getKey(.d) == .press) {
+                player_ptr.rot -= right;
+                if (state.debug_state.enabled) {
+                    std.debug.print("Right: rot: {d}\n", .{player_ptr.rot / std.math.pi});
+                }
+            } else if (window.getKey(.a) == .press) {
+                player_ptr.rot += right;
+                if (state.debug_state.enabled) {
+                    std.debug.print("Left: rot: {d}\n", .{player_ptr.rot / std.math.pi});
+                }
+            }
+
+            if (window.getKey(.space) == .press) {
+                shoot(state, player_id) catch unreachable;
+            }
         }
+
+        // Handle gamepad input
+        gamepad_input: {
+            if (state.registered_joystick == null) {
+                break :gamepad_input;
+            }
+            const joystick = state.registered_joystick.?;
+
+            if (!joystick.isPresent()) {
+                break :gamepad_input;
+            }
+
+            if (joystick.asGamepad()) |gamepad| {
+                const gamepad_state: zglfw.Gamepad.State = gamepad.getState() catch .{};
+
+                var direction = zm.f32x4s(0.0);
+                var orientation = zm.f32x4s(0.0);
+                for (std.enums.values(zglfw.Gamepad.Axis)) |axis| {
+                    const axis_v = gamepad_state.axes[@intFromEnum(axis)];
+                    if (axis == .left_x) {
+                        direction[0] = axis_v;
+                    }
+                    if (axis == .left_y) {
+                        direction[1] = -axis_v;
+                    }
+                    if (axis == .right_x) {
+                        orientation[0] = axis_v;
+                    }
+                    if (axis == .right_y) {
+                        orientation[1] = -axis_v;
+                    }
+                }
+
+                if (zm.length2(direction)[0] >= state.joystick_deadzone) {
+                    player_ptr.pos += move_speed * delta_time_vec * direction;
+                }
+                if (zm.length2(orientation)[0] >= state.joystick_deadzone) {
+                    // Calculate 2D cross-product to determine direction of rotation
+                    const target_orientation = rotated_forward[0] * orientation[1] - rotated_forward[1] * orientation[0];
+
+                    const rotation_threshold = comptime 0.0001;
+                    if (@abs(target_orientation) > rotation_threshold) {
+                        player_ptr.rot += right * std.math.sign(target_orientation);
+                    }
+                }
+
+                for (std.enums.values(zglfw.Gamepad.Button)) |button| {
+                    const action = gamepad_state.buttons[@intFromEnum(button)];
+                    if (action == .press and button == .dpad_up) {
+                        player_ptr.pos += rotated_forward;
+                        if (state.debug_state.enabled) {
+                            std.debug.print("Forward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
+                        }
+                    } else if (action == .press and button == .dpad_down) {
+                        player_ptr.pos -= rotated_forward;
+                        if (state.debug_state.enabled) {
+                            std.debug.print("Backward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
+                        }
+                    }
+
+                    if (action == .press and button == .dpad_right) {
+                        player_ptr.rot -= right;
+                        if (state.debug_state.enabled) {
+                            std.debug.print("Right: rot: {d}\n", .{player_ptr.rot / std.math.pi});
+                        }
+                    } else if (action == .press and button == .dpad_left) {
+                        player_ptr.rot += right;
+                        if (state.debug_state.enabled) {
+                            std.debug.print("Left: rot: {d}\n", .{player_ptr.rot / std.math.pi});
+                        }
+                    }
+                    if (action == .press and (button == .a or button == .right_bumper)) {
+                        shoot(state, player_id) catch unreachable;
+                    }
+                }
+            } else if (state.debug_state.enabled) {
+                std.debug.print("Mapped gamepad: Missing mapping. Is GUID found in gamecontrollerdb.txt?\n", .{});
+            }
+        }
+        wrapPosCoordinates(&player_ptr.pos);
     }
 
     // Update moving objects
@@ -252,6 +359,28 @@ test "norm to vertex space conversion" {
     try std.testing.expect(normToVertexSpace(0.0) == -1.0);
     try std.testing.expect(normToVertexSpace(1.0) == 1.0);
     try std.testing.expect(normToVertexSpace(0.5) == 0.0);
+}
+
+fn shoot(state: *State.State, player_id: State.ObjectId) error{objectNotFound}!void {
+    const player_ptr = try state.getObjectPtr(player_id);
+
+    if (state.shot_timer > state.config.shot_delay) {
+        state.shot_timer = 0.0;
+        _ = state.createObject(
+            .{
+                .pos = player_ptr.pos,
+                .rot = player_ptr.rot,
+                .scale = 0.02,
+                .type = "projectile",
+                .mesh_type = Render.MeshType.triangle,
+            },
+        ) catch unreachable;
+
+        if (state.debug_state.enabled) {
+            const player = state.getObject(player_id) catch unreachable; //player_ptr is invalid, since we created a new object
+            std.debug.print("Created Projectile at pos: {d}, {d}, rot: {d}\n", .{ player.pos[0], player.pos[1], player.rot });
+        }
+    }
 }
 
 fn wrapPosCoordinates(pos: *zm.Vec) void {

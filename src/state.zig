@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const zglfw = @import("zglfw");
 const zm = @import("zmath");
 
 const MeshType = @import("render.zig").MeshType;
@@ -71,6 +72,8 @@ pub const ObjectMap = std.AutoHashMap(ObjectId, ObjectState);
 
 var next_free_object_id: ObjectId = 0;
 
+pub const ControllerType = enum { keyboard, gamepad };
+
 pub const GameState = enum { starting, running, gameover };
 
 pub const DebugState = struct {
@@ -80,12 +83,15 @@ pub const DebugState = struct {
     avg_update_perf_in_ns: u64,
     avg_render_perf_in_ns: u64,
     update_tick_count: u64,
+    registered_gamepad_guid: []u8,
+    registered_gamepad_name: []u8,
 };
 
 pub const Config = struct {
     fps_target: i16,
 
     player_speed: f32,
+    player_turn_speed: f32,
 
     shot_delay: f32,
     shot_speed: f32,
@@ -101,6 +107,9 @@ pub const State = struct {
     debug_state: DebugState,
 
     player_name: []u8,
+    controller_type: ControllerType,
+    registered_joystick: ?zglfw.Joystick,
+    joystick_deadzone: f32,
 
     objects: ObjectMap,
     queued_deletion_id_list: std.ArrayList(ObjectId),
@@ -124,8 +133,9 @@ pub const State = struct {
             .fps_target = -1,
 
             .player_speed = 0.3,
+            .player_turn_speed = 2.0,
 
-            .shot_delay = 1.0,
+            .shot_delay = 0.8,
             .shot_speed = 0.6,
 
             .asteroid_spawn_delay = 3.0,
@@ -143,9 +153,14 @@ pub const State = struct {
                 .avg_render_perf_in_ns = 0,
                 .avg_update_perf_in_ns = 0,
                 .update_tick_count = 0,
+                .registered_gamepad_guid = "",
+                .registered_gamepad_name = "",
             },
 
             .player_name = "",
+            .controller_type = ControllerType.keyboard,
+            .registered_joystick = null,
+            .joystick_deadzone = 0.1,
 
             .objects = .init(allocator),
             .queued_deletion_id_list = .empty,
@@ -162,6 +177,8 @@ pub const State = struct {
 
     pub fn deinit(self: *State, allocator: std.mem.Allocator) void {
         allocator.free(self.player_name);
+        allocator.free(self.debug_state.registered_gamepad_guid);
+        allocator.free(self.debug_state.registered_gamepad_name);
 
         while (self.frame_time_history.popFirst()) |node| {
             const data_point: *FrameStatsDataPoint = @fieldParentPtr("node", node);

@@ -353,8 +353,6 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
 
     zglfw.setWindowTitle(graphics.window, window_title);
 
-    zglfw.pollEvents();
-
     zgui.backend.newFrame(
         window_width,
         window_height,
@@ -438,11 +436,25 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
                 "Object count : {d}",
                 .{state.objects.count()},
             );
+            zgui.bulletText(
+                "Gamepad GUID : {s}",
+                .{state.debug_state.registered_gamepad_guid},
+            );
+            zgui.bulletText(
+                "Gamepad Name : {s}",
+                .{state.debug_state.registered_gamepad_name},
+            );
 
             _ = zgui.sliderFloat("Player Speed", .{
                 .v = &state.config.player_speed,
                 .min = 0.01,
                 .max = 2.0,
+            });
+
+            _ = zgui.sliderFloat("Player Turn Speed", .{
+                .v = &state.config.player_turn_speed,
+                .min = 0.5,
+                .max = 4.0,
             });
 
             _ = zgui.sliderFloat("Shot Delay", .{
