@@ -366,6 +366,10 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             "Average: {d:.3} ms/frame ({d:.1} fps)",
             .{ gctx.stats.average_cpu_time, gctx.stats.fps },
         );
+        zgui.bulletText(
+            "Score: {d}",
+            .{state.score},
+        );
 
         _ = zgui.checkbox("Debug", .{ .v = &state.debug_state.enabled });
 
@@ -478,8 +482,18 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
                 .min = 0.01,
                 .max = 1.0,
             });
+            _ = zgui.sliderFloat("Asteroid Min Spawn Scale", .{
+                .v = &state.config.asteroid_min_spawn_scale,
+                .min = 0.01,
+                .max = state.config.asteroid_max_spawn_scale,
+            });
+            _ = zgui.sliderFloat("Asteroid Max Spawn Scale", .{
+                .v = &state.config.asteroid_max_spawn_scale,
+                .min = state.config.asteroid_min_spawn_scale,
+                .max = 1.0,
+            });
             _ = zgui.sliderFloat("Asteroid Split Threshold", .{
-                .v = &state.config.asteroid_split_threshold,
+                .v = &state.config.asteroid_min_split_scale,
                 .min = 0.01,
                 .max = 1.0,
             });

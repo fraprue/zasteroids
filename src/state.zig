@@ -98,7 +98,10 @@ pub const Config = struct {
 
     asteroid_spawn_delay: f32,
     asteroid_speed: f32,
-    asteroid_split_threshold: f32,
+    asteroid_min_split_scale: f32,
+    asteroid_min_spawn_scale: f32,
+    asteroid_max_spawn_scale: f32,
+    asteroid_base_score: f32,
 };
 
 pub const State = struct {
@@ -107,6 +110,8 @@ pub const State = struct {
     debug_state: DebugState,
 
     player_name: []u8,
+    score: u32,
+
     controller_type: ControllerType,
     registered_joystick: ?zglfw.Joystick,
     joystick_deadzone: f32,
@@ -141,7 +146,10 @@ pub const State = struct {
 
             .asteroid_spawn_delay = 3.0,
             .asteroid_speed = 0.2,
-            .asteroid_split_threshold = 0.07,
+            .asteroid_min_split_scale = 0.07,
+            .asteroid_max_spawn_scale = 0.2,
+            .asteroid_min_spawn_scale = 0.05,
+            .asteroid_base_score = 100.0,
         };
 
         self.* = .{
@@ -159,6 +167,8 @@ pub const State = struct {
             },
 
             .player_name = "",
+            .score = 0,
+
             .controller_type = ControllerType.keyboard,
             .registered_joystick = null,
             .joystick_deadzone = 0.1,
@@ -202,6 +212,8 @@ pub const State = struct {
                 .mesh_type = MeshType.triangle,
             },
         ) catch unreachable;
+
+        self.score = 0;
 
         self.game_state = GameState.running;
     }

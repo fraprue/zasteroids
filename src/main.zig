@@ -333,6 +333,22 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
                     if (state.debug_state.enabled) {
                         std.debug.print("Detected collision between projectile {d} and asteroid {d}\n", .{ projectile_id, asteroid_id });
                     }
+                    const asteroid_ptr = state.getObjectPtr(asteroid_id) catch unreachable;
+
+                    const min_score_mult = 0.1;
+                    const adapted_score = zm.mapLinearV(
+                        asteroid_ptr.scale,
+                        state.config.asteroid_max_spawn_scale,
+                        state.config.asteroid_min_spawn_scale,
+                        state.config.asteroid_base_score * min_score_mult,
+                        state.config.asteroid_base_score,
+                    );
+                    if (state.debug_state.enabled) {
+                        std.debug.print("Destroying asteroid of scale {d} scored {d} points.\n", .{ asteroid_ptr.scale, adapted_score });
+                    }
+
+                    state.score += @as(u32, @intFromFloat(@floor(adapted_score)));
+
                     splitAsteroid(allocator, state, asteroid_id) catch unreachable;
                     state.removeObjectQueued(allocator, projectile_id) catch unreachable;
                 }
@@ -444,7 +460,9 @@ fn spawnAsteroid(allocator: std.mem.Allocator, state: *State.State) error{OutOfM
         },
     }
 
-    const rand_scale = @as(f32, @floatFromInt(state.rng.random().intRangeAtMost(i16, 50, 200))) / 1000.0;
+    const min_scale_int = @as(u32, @intFromFloat(state.config.asteroid_min_spawn_scale * 1000));
+    const max_scale_int = @as(u32, @intFromFloat(state.config.asteroid_max_spawn_scale * 1000));
+    const rand_scale = @as(f32, @floatFromInt(state.rng.random().intRangeAtMost(u32, min_scale_int, max_scale_int))) / 1000.0;
 
     try state.createObjectQueued(
         allocator,
@@ -462,41 +480,43 @@ fn spawnAsteroid(allocator: std.mem.Allocator, state: *State.State) error{OutOfM
 }
 
 fn splitAsteroid(allocator: std.mem.Allocator, state: *State.State, asteroid_id: State.ObjectId) error{OutOfMemory}!void {
-    const asteroid = state.getObject(asteroid_id) catch unreachable;
-
-    if (asteroid.scale >= state.config.asteroid_split_threshold) {
-        const spread_angle = comptime std.math.degreesToRadians(20);
-        const splitted_asteroid_1 = State.ObjectState{
-            .pos = asteroid.pos,
-            .rot = asteroid.rot - spread_angle,
-            .scale = asteroid.scale * 0.5,
-            .type = "asteroid",
-            .mesh_type = Render.MeshType.asteroid,
-        };
-        try state.createObjectQueued(allocator, splitted_asteroid_1);
-        if (state.debug_state.enabled) {
-            std.debug.print("Created Asteroid by splitting asteroid {}, pos: {d}, {d}, rot: {d}\n", .{
-                asteroid_id,
-                splitted_asteroid_1.pos[0],
-                splitted_asteroid_1.pos[1],
-                splitted_asteroid_1.rot,
-            });
-        }
-
-        var splitted_asteroid_2 = splitted_asteroid_1;
-        splitted_asteroid_2.rot = asteroid.rot + spread_angle;
-
-        try state.createObjectQueued(allocator, splitted_asteroid_2);
-        if (state.debug_state.enabled) {
-            std.debug.print("Created Asteroid by splitting asteroid {}, pos: {d}, {d}, rot: {d}\n", .{
-                asteroid_id,
-                splitted_asteroid_2.pos[0],
-                splitted_asteroid_2.pos[1],
-                splitted_asteroid_2.rot,
-            });
-        }
-    }
+    const asteroid = state.getObjectPtr(asteroid_id) catch unreachable;
     try state.removeObjectQueued(allocator, asteroid_id);
+
+    if (asteroid.scale < state.config.asteroid_min_split_scale or std.math.approxEqAbs(f32, asteroid.scale, state.config.asteroid_min_spawn_scale, 0.0001)) {
+        return;
+    }
+
+    const spread_angle = comptime std.math.degreesToRadians(20);
+    const splitted_asteroid_1 = State.ObjectState{
+        .pos = asteroid.pos,
+        .rot = asteroid.rot - spread_angle,
+        .scale = @max(asteroid.scale * 0.5, state.config.asteroid_min_spawn_scale),
+        .type = "asteroid",
+        .mesh_type = Render.MeshType.asteroid,
+    };
+    try state.createObjectQueued(allocator, splitted_asteroid_1);
+    if (state.debug_state.enabled) {
+        std.debug.print("Created Asteroid by splitting asteroid {}, pos: {d}, {d}, rot: {d}\n", .{
+            asteroid_id,
+            splitted_asteroid_1.pos[0],
+            splitted_asteroid_1.pos[1],
+            splitted_asteroid_1.rot,
+        });
+    }
+
+    var splitted_asteroid_2 = splitted_asteroid_1;
+    splitted_asteroid_2.rot = asteroid.rot + spread_angle;
+
+    try state.createObjectQueued(allocator, splitted_asteroid_2);
+    if (state.debug_state.enabled) {
+        std.debug.print("Created Asteroid by splitting asteroid {}, pos: {d}, {d}, rot: {d}\n", .{
+            asteroid_id,
+            splitted_asteroid_2.pos[0],
+            splitted_asteroid_2.pos[1],
+            splitted_asteroid_2.rot,
+        });
+    }
 }
 
 fn collides(state: *State.State, o1_id: State.ObjectId, o2_id: State.ObjectId) error{objectNotFound}!bool {
