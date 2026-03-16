@@ -189,7 +189,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
             }
 
             if (window.getKey(.space) == .press) {
-                shoot(state, player_id) catch unreachable;
+                shoot(allocator, state, player_id) catch unreachable;
             }
         }
 
@@ -264,7 +264,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
                         }
                     }
                     if (action == .press and (button == .a or button == .right_bumper)) {
-                        shoot(state, player_id) catch unreachable;
+                        shoot(allocator, state, player_id) catch unreachable;
                     }
                 }
             } else if (state.debug_state.enabled) {
@@ -345,10 +345,11 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
         state.asteroid_spawn_timer += delta_time;
         if (state.asteroid_spawn_timer > state.config.asteroid_spawn_delay) {
             state.asteroid_spawn_timer = 0.0;
-            spawnAsteroid(state);
+            spawnAsteroid(allocator, state) catch unreachable;
         }
     }
     state.removeQueuedObjects();
+    state.createQueuedObjects() catch unreachable;
 }
 
 fn normToVertexSpace(v: f32) f32 {
@@ -361,12 +362,13 @@ test "norm to vertex space conversion" {
     try std.testing.expect(normToVertexSpace(0.5) == 0.0);
 }
 
-fn shoot(state: *State.State, player_id: State.ObjectId) error{objectNotFound}!void {
+fn shoot(allocator: std.mem.Allocator, state: *State.State, player_id: State.ObjectId) error{ objectNotFound, OutOfMemory }!void {
     const player_ptr = try state.getObjectPtr(player_id);
 
     if (state.shot_timer > state.config.shot_delay) {
         state.shot_timer = 0.0;
-        _ = state.createObject(
+        try state.createObjectQueued(
+            allocator,
             .{
                 .pos = player_ptr.pos,
                 .rot = player_ptr.rot,
@@ -374,11 +376,10 @@ fn shoot(state: *State.State, player_id: State.ObjectId) error{objectNotFound}!v
                 .type = "projectile",
                 .mesh_type = Render.MeshType.triangle,
             },
-        ) catch unreachable;
+        );
 
         if (state.debug_state.enabled) {
-            const player = state.getObject(player_id) catch unreachable; //player_ptr is invalid, since we created a new object
-            std.debug.print("Created Projectile at pos: {d}, {d}, rot: {d}\n", .{ player.pos[0], player.pos[1], player.rot });
+            std.debug.print("Created Projectile at pos: {d}, {d}, rot: {d}\n", .{ player_ptr.pos[0], player_ptr.pos[1], player_ptr.rot });
         }
     }
 }
@@ -414,7 +415,7 @@ test "object position wrapping" {
     try std.testing.expect(zm.all(zm.isNearEqual(ignore_coordinates_pos, zm.Vec{ 0.0, 0.0, 0.0, 0.0 }, zm.f32x4s(0.0)), 2));
 }
 
-fn spawnAsteroid(state: *State.State) void {
+fn spawnAsteroid(allocator: std.mem.Allocator, state: *State.State) error{OutOfMemory}!void {
     const screen_edge = @as(ScreenEdge, @enumFromInt(state.rng.random().intRangeAtMost(u2, 0, 3)));
 
     var pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 };
@@ -445,7 +446,8 @@ fn spawnAsteroid(state: *State.State) void {
 
     const rand_scale = @as(f32, @floatFromInt(state.rng.random().intRangeAtMost(i16, 50, 200))) / 1000.0;
 
-    _ = state.createObject(
+    try state.createObjectQueued(
+        allocator,
         .{
             .pos = pos,
             .rot = rot,
@@ -453,7 +455,7 @@ fn spawnAsteroid(state: *State.State) void {
             .type = "asteroid",
             .mesh_type = Render.MeshType.asteroid,
         },
-    ) catch unreachable;
+    );
     if (state.debug_state.enabled) {
         std.debug.print("Created Asteroid at edge: {}, pos: {d}, {d}, rot: {d}\n", .{ screen_edge, pos[0], pos[1], rot });
     }
@@ -471,7 +473,7 @@ fn splitAsteroid(allocator: std.mem.Allocator, state: *State.State, asteroid_id:
             .type = "asteroid",
             .mesh_type = Render.MeshType.asteroid,
         };
-        _ = try state.createObject(splitted_asteroid_1);
+        try state.createObjectQueued(allocator, splitted_asteroid_1);
         if (state.debug_state.enabled) {
             std.debug.print("Created Asteroid by splitting asteroid {}, pos: {d}, {d}, rot: {d}\n", .{
                 asteroid_id,
@@ -484,7 +486,7 @@ fn splitAsteroid(allocator: std.mem.Allocator, state: *State.State, asteroid_id:
         var splitted_asteroid_2 = splitted_asteroid_1;
         splitted_asteroid_2.rot = asteroid.rot + spread_angle;
 
-        _ = try state.createObject(splitted_asteroid_2);
+        try state.createObjectQueued(allocator, splitted_asteroid_2);
         if (state.debug_state.enabled) {
             std.debug.print("Created Asteroid by splitting asteroid {}, pos: {d}, {d}, rot: {d}\n", .{
                 asteroid_id,

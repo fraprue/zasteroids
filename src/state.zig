@@ -113,6 +113,7 @@ pub const State = struct {
 
     objects: ObjectMap,
     queued_deletion_id_list: std.ArrayList(ObjectId),
+    queued_create_object_list: std.ArrayList(ObjectState),
 
     rng: std.Random.DefaultPrng,
 
@@ -164,6 +165,7 @@ pub const State = struct {
 
             .objects = .init(allocator),
             .queued_deletion_id_list = .empty,
+            .queued_create_object_list = .empty,
 
             .rng = prng,
 
@@ -186,6 +188,7 @@ pub const State = struct {
         }
         self.mesh_collision_data.deinit(allocator);
         self.queued_deletion_id_list.deinit(allocator);
+        self.queued_create_object_list.deinit(allocator);
         self.objects.deinit();
     }
 
@@ -218,6 +221,17 @@ pub const State = struct {
         try self.objects.put(id, object);
 
         return id;
+    }
+
+    pub fn createObjectQueued(self: *State, allocator: std.mem.Allocator, object: ObjectState) error{OutOfMemory}!void {
+        try self.queued_create_object_list.append(allocator, object);
+    }
+
+    pub fn createQueuedObjects(self: *State) error{OutOfMemory}!void {
+        while (self.queued_create_object_list.items.len > 0) {
+            const object = self.queued_create_object_list.pop().?;
+            _ = try self.createObject(object);
+        }
     }
 
     pub fn getObjectPtr(self: *State, object_id: ObjectId) error{objectNotFound}!*ObjectState {
@@ -298,6 +312,34 @@ test "create object" {
     try std.testing.expect(state_object.scale == object.scale);
     try std.testing.expect(state_object.mesh_type == object.mesh_type);
     try std.testing.expect(std.mem.eql(u8, object_type, object.type));
+}
+
+test "create object queued" {
+    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
+    const gpa = gpa_state.allocator();
+    defer std.testing.expect(gpa_state.deinit() == std.heap.Check.ok) catch unreachable;
+
+    const state = try gpa.create(State);
+    defer gpa.destroy(state);
+
+    try state.init(gpa);
+    defer state.deinit(gpa);
+
+    try state.createObjectQueued(gpa, .{
+        .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .rot = 0.5,
+        .scale = 0.1,
+        .type = "test_type",
+        .mesh_type = MeshType.triangle,
+    });
+
+    std.debug.assert(state.objects.count() == 0);
+    try std.testing.expect(state.queued_create_object_list.items.len == 1);
+
+    try state.createQueuedObjects();
+
+    try std.testing.expect(state.objects.count() == 1);
+    try std.testing.expect(state.queued_create_object_list.items.len == 0);
 }
 
 test "remove object" {
