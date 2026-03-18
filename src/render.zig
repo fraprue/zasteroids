@@ -449,6 +449,19 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
                 .{state.debug_state.registered_gamepad_name},
             );
 
+            var player_id_list: std.ArrayList(State.ObjectId) = .empty;
+            defer player_id_list.deinit(allocator);
+            state.getAllObjectsOfType(allocator, "player", &player_id_list) catch unreachable;
+            if (player_id_list.items.len > 0) {
+                const player_id = player_id_list.getLast();
+                const player_ptr = state.getObjectPtr(player_id) catch unreachable;
+                _ = zgui.sliderFloat("Player Scale", .{
+                    .v = &player_ptr.scale,
+                    .min = 0.01,
+                    .max = 1.0,
+                });
+            }
+
             _ = zgui.sliderFloat("Player Speed", .{
                 .v = &state.config.player_speed,
                 .min = 0.01,
