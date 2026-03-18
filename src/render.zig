@@ -568,6 +568,7 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             .cond = .once,
         });
         if (zgui.begin("Gameover Menu", .{ .flags = .{ .always_auto_resize = true } })) {
+            zgui.text("You scored {d} points.", .{state.score});
             zgui.text("Git gud!", .{});
             if (zgui.button("Restart", .{})) {
                 state.startGame();
