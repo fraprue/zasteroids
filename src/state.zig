@@ -72,9 +72,20 @@ pub const ObjectMap = std.AutoHashMap(ObjectId, ObjectState);
 
 var next_free_object_id: ObjectId = 0;
 
+pub const HighscoreEntry = struct {
+    name: []const u8,
+    score: u32,
+};
+
+fn highscoreSort(_: void, v1: HighscoreEntry, v2: HighscoreEntry) bool {
+    return v1.score > v2.score;
+}
+
+pub const HighscoreList = std.ArrayList(HighscoreEntry);
+
 pub const ControllerType = enum { keyboard, gamepad };
 
-pub const GameState = enum { starting, running, gameover };
+pub const GameState = enum { starting, running, gameover, highscore };
 
 pub const DebugState = struct {
     enabled: bool,
@@ -111,6 +122,8 @@ pub const State = struct {
 
     player_name: []u8,
     score: u32,
+
+    highscore_cache: HighscoreList,
 
     controller_type: ControllerType,
     registered_joystick: ?zglfw.Joystick,
@@ -169,6 +182,8 @@ pub const State = struct {
             .player_name = "",
             .score = 0,
 
+            .highscore_cache = .empty,
+
             .controller_type = ControllerType.keyboard,
             .registered_joystick = null,
             .joystick_deadzone = 0.1,
@@ -199,6 +214,8 @@ pub const State = struct {
         self.mesh_collision_data.deinit(allocator);
         self.queued_deletion_id_list.deinit(allocator);
         self.queued_create_object_list.deinit(allocator);
+
+        self.clearCachedHighscoreData(allocator);
         self.objects.deinit();
     }
 
@@ -218,12 +235,134 @@ pub const State = struct {
         self.game_state = GameState.running;
     }
 
-    pub fn gameOver(self: *State) void {
+    pub fn gameOver(self: *State, allocator: std.mem.Allocator) !void {
         var objects_iterator = self.objects.iterator();
         while (objects_iterator.next()) |object| {
             self.removeObject(object.key_ptr.*);
         }
+
+        var highscore_list: HighscoreList = .empty;
+        defer highscore_list.deinit(allocator);
+        try self.getHighscore(allocator, &highscore_list);
+
+        try highscore_list.append(allocator, .{
+            .name = self.player_name,
+            .score = self.score,
+        });
+
+        try self.storeHighscore(&highscore_list);
+        self.clearCachedHighscoreData(allocator);
+
         self.game_state = GameState.gameover;
+    }
+
+    pub fn showHighscore(self: *State) void {
+        self.game_state = GameState.highscore;
+    }
+
+    pub fn hideHighscore(self: *State) void {
+        self.game_state = GameState.starting;
+    }
+
+    fn clearCachedHighscoreData(self: *State, allocator: std.mem.Allocator) void {
+        for (self.highscore_cache.items) |entry| {
+            allocator.free(entry.name);
+        }
+        self.highscore_cache.deinit(allocator);
+
+        self.highscore_cache = .empty;
+    }
+
+    pub fn getHighscore(self: *State, allocator: std.mem.Allocator, highscore_list: *HighscoreList) !void {
+        if (self.highscore_cache.items.len == 0) {
+            try self.loadHighscore(allocator);
+        }
+
+        for (self.highscore_cache.items) |entry| {
+            try highscore_list.append(allocator, entry);
+        }
+    }
+
+    fn loadHighscore(self: *State, allocator: std.mem.Allocator) !void {
+        {
+            var highscore_file: std.fs.File = undefined;
+            highscore_file = std.fs.cwd().openFile("highscore.txt", .{ .mode = .read_only }) catch |err| {
+                if (err == std.fs.File.OpenError.FileNotFound) {
+                    highscore_file = std.fs.cwd().createFile("highscore.txt", .{ .read = true }) catch unreachable;
+                    return;
+                }
+                return err;
+            };
+            defer highscore_file.close();
+
+            var file_buffer: [1024]u8 = undefined;
+            var file_reader = highscore_file.reader(&file_buffer);
+
+            var bare_line = try file_reader.interface.takeDelimiter('\n');
+
+            while (bare_line != null) {
+                const line = std.mem.trim(u8, bare_line.?, "\r");
+
+                var it = std.mem.splitScalar(u8, line, ':');
+                var name: ?[]const u8 = null;
+                var score: ?u32 = null;
+
+                while (it.next()) |part| {
+                    if (std.mem.eql(u8, part, line)) {
+                        std.debug.print("Missing part in highscore file line: {s}\n", .{part});
+                        return error.InvalidHighscoreFile;
+                    }
+                    if (name == null) {
+                        name = part;
+                    } else if (score == null) {
+                        const score_str = part;
+                        const parsed_score = std.fmt.parseInt(u32, score_str, 10) catch |err| {
+                            std.debug.print("Error parsing score from highscore file: {s}, error: {}\n", .{ score_str, err });
+                            return err;
+                        };
+                        score = parsed_score;
+                    } else {
+                        std.debug.print("Unexpected extra part in highscore file line: {s}\n", .{part});
+                        return error.InvalidHighscoreFile;
+                    }
+                }
+
+                const stored_name = allocator.alloc(u8, name.?.len) catch unreachable;
+                @memcpy(stored_name, name.?);
+
+                try self.highscore_cache.append(allocator, .{
+                    .name = stored_name,
+                    .score = score.?,
+                });
+
+                bare_line = try file_reader.interface.takeDelimiter('\n');
+            }
+        }
+
+        std.mem.sort(HighscoreEntry, self.highscore_cache.items, {}, highscoreSort);
+    }
+
+    fn storeHighscore(_: *State, highscore_list: *HighscoreList) !void {
+        std.mem.sort(HighscoreEntry, highscore_list.items, {}, highscoreSort);
+
+        var highscore_file = try std.fs.cwd().openFile("highscore.txt", .{ .mode = .read_write });
+        defer highscore_file.close();
+
+        var file_buffer: [2048]u8 = undefined;
+        var writer = highscore_file.writer(&file_buffer);
+
+        const max_highscore_entries = comptime 10;
+        var entry_count: usize = 0;
+        for (highscore_list.items) |entry| {
+            var line_buffer: [128]u8 = undefined;
+            const line = try std.fmt.bufPrint(&line_buffer, "{s}:{d}\n", .{ entry.name, entry.score });
+
+            try writer.interface.writeAll(line);
+            try writer.interface.flush();
+            entry_count += 1;
+
+            if (entry_count >= max_highscore_entries) break;
+        }
     }
 
     pub fn createObject(self: *State, object: ObjectState) error{OutOfMemory}!ObjectId {

@@ -570,9 +570,37 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             if (zgui.button("Quit", .{})) {
                 graphics.window.setShouldClose(true);
             }
+            if (zgui.button("Show Highscore", .{})) {
+                state.showHighscore();
+            }
         }
         zgui.end();
     }
+
+    if (state.game_state == State.GameState.highscore) {
+        zgui.setNextWindowPos(.{
+            .x = 0.5 * @as(f32, @floatFromInt(window_width)),
+            .y = 0.3 * @as(f32, @floatFromInt(window_height)),
+            .cond = .once,
+        });
+
+        if (zgui.begin("Highscore", .{ .flags = .{ .always_auto_resize = true } })) {
+            zgui.text("Highscore:", .{});
+
+            var highscore_list: State.HighscoreList = .empty;
+            defer highscore_list.deinit(allocator);
+            state.getHighscore(allocator, &highscore_list) catch unreachable;
+
+            for (highscore_list.items) |entry| {
+                zgui.text("{s}: {d} points", .{ entry.name, entry.score });
+            }
+            if (zgui.button("Back", .{})) {
+                state.hideHighscore();
+            }
+        }
+        zgui.end();
+    }
+
     if (state.game_state == State.GameState.gameover) {
         // Set the starting menu position to custom values
         zgui.setNextWindowPos(.{
@@ -589,6 +617,9 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             zgui.sameLine(.{});
             if (zgui.button("Quit", .{})) {
                 graphics.window.setShouldClose(true);
+            }
+            if (zgui.button("To Start Menu", .{})) {
+                state.game_state = State.GameState.starting;
             }
         }
         zgui.end();

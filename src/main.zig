@@ -325,7 +325,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
 
         for (asteroid_id_list.items) |asteroid_id| {
             if (collides(state, player_id, asteroid_id) catch unreachable) {
-                state.gameOver();
+                state.gameOver(allocator) catch unreachable;
                 return;
             }
             for (projectile_id_list.items) |projectile_id| {
