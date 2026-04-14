@@ -123,6 +123,7 @@ pub const State = struct {
     player_name: []u8,
     score: u32,
 
+    highscore_cached: bool,
     highscore_cache: HighscoreList,
 
     controller_type: ControllerType,
@@ -182,6 +183,7 @@ pub const State = struct {
             .player_name = "",
             .score = 0,
 
+            .highscore_cached = false,
             .highscore_cache = .empty,
 
             .controller_type = ControllerType.keyboard,
@@ -270,29 +272,26 @@ pub const State = struct {
         }
         self.highscore_cache.deinit(allocator);
 
+        self.highscore_cached = false;
         self.highscore_cache = .empty;
     }
 
     pub fn getHighscore(self: *State, allocator: std.mem.Allocator, highscore_list: *HighscoreList) !void {
-        if (self.highscore_cache.items.len == 0) {
+        if (!self.highscore_cached) {
             try self.loadHighscore(allocator);
         }
 
+        try highscore_list.ensureTotalCapacityPrecise(allocator, self.highscore_cache.items.len);
         for (self.highscore_cache.items) |entry| {
-            try highscore_list.append(allocator, entry);
+            try highscore_list.appendBounded(entry);
         }
+
+        self.highscore_cached = true;
     }
 
     fn loadHighscore(self: *State, allocator: std.mem.Allocator) !void {
         {
-            var highscore_file: std.fs.File = undefined;
-            highscore_file = std.fs.cwd().openFile("highscore.txt", .{ .mode = .read_only }) catch |err| {
-                if (err == std.fs.File.OpenError.FileNotFound) {
-                    highscore_file = std.fs.cwd().createFile("highscore.txt", .{ .read = true }) catch unreachable;
-                    return;
-                }
-                return err;
-            };
+            var highscore_file = std.fs.cwd().createFile("highscore.txt", .{ .read = true, .truncate = false }) catch unreachable;
             defer highscore_file.close();
 
             var file_buffer: [1024]u8 = undefined;
@@ -345,7 +344,7 @@ pub const State = struct {
     fn storeHighscore(_: *State, highscore_list: *HighscoreList) !void {
         std.mem.sort(HighscoreEntry, highscore_list.items, {}, highscoreSort);
 
-        var highscore_file = try std.fs.cwd().openFile("highscore.txt", .{ .mode = .read_write });
+        var highscore_file = try std.fs.cwd().createFile("highscore.txt", .{});
         defer highscore_file.close();
 
         var file_buffer: [2048]u8 = undefined;
