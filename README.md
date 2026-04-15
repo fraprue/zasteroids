@@ -5,9 +5,8 @@ You are the colorful triangle in the middle of the screen. You can move with the
 Alternatively, you can play with a gamepad. Left Stick moves the ship and right stick rotates it. You can shoot using the right bumper.
 
 # Currently missing features
-- Sound!
 - Configuration of key bindings
-- Exposing game config via file
+- Persistent game config
 - Local Multiplayer?
 
 # Currently known issues

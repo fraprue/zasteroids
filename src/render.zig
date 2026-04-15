@@ -7,6 +7,7 @@ const zgui = @import("zgui");
 const content_dir = @import("build_options").content_dir;
 
 const State = @import("state.zig");
+const Audio = @import("audio.zig");
 
 // zig fmt: off
 const wgsl_shader =
@@ -336,7 +337,7 @@ fn appendMesh(
     meshes_vertices.appendSlice(allocator, vertex_data) catch unreachable;
 }
 
-pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *GraphicsState) void {
+pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *GraphicsState, audio: *Audio.AudioState) void {
     const gctx = graphics.gctx;
 
     const window_name = "My First Game";
@@ -512,6 +513,34 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             });
         }
 
+        // The zaudio library doesn't expose the miniaudio API for getVolume directly, so we have to mimic what the library does internally
+        var master_volume = audio.engine.asNodeGraph().getEndpoint().getOutputBusVolume(0);
+        if (zgui.sliderFloat("Master Volume", .{
+            .v = &master_volume,
+            .min = 0.0,
+            .max = 1.0,
+        })) {
+            audio.engine.setVolume(master_volume) catch unreachable;
+        }
+
+        var music_volume = audio.music.getVolume();
+        if (zgui.sliderFloat("Music Volume", .{
+            .v = &music_volume,
+            .min = 0.0,
+            .max = 1.0,
+        })) {
+            audio.music.setVolume(music_volume);
+        }
+
+        var sound_volume = audio.sfx_group.getVolume();
+        if (zgui.sliderFloat("Sound Volume", .{
+            .v = &sound_volume,
+            .min = 0.0,
+            .max = 1.0,
+        })) {
+            audio.sfx_group.setVolume(sound_volume);
+        }
+
         var vsync = graphics.config.vsync;
         if (zgui.checkbox("VSync", .{ .v = &vsync })) {
             graphics.setVSync(vsync);
@@ -564,13 +593,16 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             }
 
             if (zgui.button("Start", .{})) {
+                playClickSound(audio, allocator);
                 state.startGame();
             }
             zgui.sameLine(.{});
             if (zgui.button("Quit", .{})) {
+                playClickSound(audio, allocator);
                 graphics.window.setShouldClose(true);
             }
             if (zgui.button("Show Highscore", .{})) {
+                playClickSound(audio, allocator);
                 state.showHighscore();
             }
         }
@@ -595,6 +627,7 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
                 zgui.text("{s}: {d} points", .{ entry.name, entry.score });
             }
             if (zgui.button("Back", .{})) {
+                playClickSound(audio, allocator);
                 state.hideHighscore();
             }
         }
@@ -612,13 +645,16 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             zgui.text("You scored {d} points.", .{state.score});
             zgui.text("Git gud!", .{});
             if (zgui.button("Restart", .{})) {
+                playClickSound(audio, allocator);
                 state.startGame();
             }
             zgui.sameLine(.{});
             if (zgui.button("Quit", .{})) {
+                playClickSound(audio, allocator);
                 graphics.window.setShouldClose(true);
             }
             if (zgui.button("To Start Menu", .{})) {
+                playClickSound(audio, allocator);
                 state.game_state = State.GameState.starting;
             }
         }
@@ -710,4 +746,8 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
 
     gctx.submit(&.{commands});
     _ = gctx.present();
+}
+
+fn playClickSound(audio: *Audio.AudioState, allocator: std.mem.Allocator) void {
+    audio.spawnSound(allocator, 1) catch unreachable;
 }

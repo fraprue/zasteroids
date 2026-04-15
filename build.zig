@@ -38,6 +38,10 @@ pub fn build(b: *std.Build) void {
     const zmath = b.dependency("zmath", .{});
     exe.root_module.addImport("zmath", zmath.module("root"));
 
+    const zaudio = b.dependency("zaudio", .{});
+    exe.root_module.addImport("zaudio", zaudio.module("root"));
+    exe.linkLibrary(zaudio.artifact("miniaudio"));
+
     const zgui = b.dependency("zgui", .{
         .shared = false,
         .with_implot = true,

@@ -15,6 +15,7 @@
 !*.hlsl
 !*.hlsli
 !*.ttf
+!*.wav
 
 !LICENSE*
 !*.txt

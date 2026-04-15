@@ -1,10 +1,12 @@
 const std = @import("std");
 const Window = @import("zglfw").Window;
+const zaudio = @import("zaudio"); // TODO: Currently only needed for error handling in main. Refactor to remove this dependency from main.
 const zglfw = @import("zglfw");
 const zm = @import("zmath");
 
 const content_dir = @import("build_options").content_dir;
 
+const Audio = @import("audio.zig");
 const Render = @import("render.zig");
 const State = @import("state.zig");
 
@@ -28,6 +30,18 @@ pub fn main() !void {
 
     try state.init(gpa);
     defer state.deinit(gpa);
+
+    const audio = try gpa.create(Audio.AudioState);
+    defer gpa.destroy(audio);
+
+    try audio.init(gpa);
+    defer audio.deinit(gpa);
+
+    audio.engine.start() catch |err| {
+        std.debug.print("Failed to start audio engine: {}\n", .{err});
+        return err;
+    };
+    defer audio.engine.stop() catch unreachable;
 
     const graphics = try gpa.create(Render.GraphicsState);
     defer gpa.destroy(graphics);
@@ -91,14 +105,14 @@ pub fn main() !void {
 
         zglfw.pollEvents();
 
-        update(gpa, state, window, graphics.gctx.stats.delta_time);
+        update(gpa, state, audio, window, graphics.gctx.stats.delta_time);
 
         if (state.debug_state.enabled) {
             state.debug_state.current_update_perf_in_ns += update_perf_timer.read();
             render_perf_timer.reset();
         }
 
-        Render.render(gpa, state, graphics);
+        Render.render(gpa, state, graphics, audio);
 
         if (state.debug_state.enabled) {
             state.debug_state.current_render_perf_in_ns += render_perf_timer.read();
@@ -128,7 +142,7 @@ pub fn main() !void {
     }
 }
 
-fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, delta_time: f32) void {
+fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.AudioState, window: *Window, delta_time: f32) void {
     if (state.game_state != State.GameState.running) {
         return;
     }
@@ -189,7 +203,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
             }
 
             if (window.getKey(.space) == .press) {
-                shoot(allocator, state, player_id) catch unreachable;
+                shoot(allocator, state, audio, player_id) catch unreachable;
             }
         }
 
@@ -264,7 +278,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
                         }
                     }
                     if (action == .press and (button == .a or button == .right_bumper)) {
-                        shoot(allocator, state, player_id) catch unreachable;
+                        shoot(allocator, state, audio, player_id) catch unreachable;
                     }
                 }
             } else if (state.debug_state.enabled) {
@@ -364,6 +378,8 @@ fn update(allocator: std.mem.Allocator, state: *State.State, window: *Window, de
             spawnAsteroid(allocator, state) catch unreachable;
         }
     }
+
+    audio.cleanupFinishedSounds();
     state.removeQueuedObjects();
     state.createQueuedObjects() catch unreachable;
 }
@@ -378,7 +394,7 @@ test "norm to vertex space conversion" {
     try std.testing.expect(normToVertexSpace(0.5) == 0.0);
 }
 
-fn shoot(allocator: std.mem.Allocator, state: *State.State, player_id: State.ObjectId) error{ objectNotFound, OutOfMemory }!void {
+fn shoot(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.AudioState, player_id: State.ObjectId) (zaudio.Error || error{ InvalidSoundIndex, objectNotFound, OutOfMemory })!void {
     const player_ptr = try state.getObjectPtr(player_id);
 
     if (state.shot_timer > state.config.shot_delay) {
@@ -393,6 +409,8 @@ fn shoot(allocator: std.mem.Allocator, state: *State.State, player_id: State.Obj
                 .mesh_type = Render.MeshType.triangle,
             },
         );
+
+        try audio.spawnSound(allocator, 0);
 
         if (state.debug_state.enabled) {
             std.debug.print("Created Projectile at pos: {d}, {d}, rot: {d}\n", .{ player_ptr.pos[0], player_ptr.pos[1], player_ptr.rot });

@@ -1,0 +1,121 @@
+const std = @import("std");
+
+const zaudio = @import("zaudio");
+
+const content_dir = @import("build_options").content_dir;
+
+const State = @import("state.zig");
+
+pub const AudioState = struct {
+    device: *zaudio.Device,
+    engine: *zaudio.Engine,
+    mutex: std.Thread.Mutex = .{},
+    sounds: std.ArrayList(*zaudio.Sound),
+    sfx_group: *zaudio.SoundGroup,
+    music: *zaudio.Sound,
+    spawned_sounds: std.ArrayList(*zaudio.Sound),
+
+    fn audioCallback(
+        device: *zaudio.Device,
+        output: ?*anyopaque,
+        _: ?*const anyopaque,
+        frame_count: u32,
+    ) callconv(.c) void {
+        const audio = @as(*AudioState, @ptrCast(@alignCast(device.getUserData())));
+
+        audio.engine.asNodeGraphMut().readPcmFrames(output.?, frame_count, null) catch {};
+    }
+
+    pub fn init(self: *AudioState, allocator: std.mem.Allocator) !void {
+        zaudio.init(allocator);
+
+        const device = device: {
+            var config = zaudio.Device.Config.init(.playback);
+            config.data_callback = audioCallback;
+            config.user_data = self;
+            config.sample_rate = 48_000;
+            config.period_size_in_frames = 480;
+            config.period_size_in_milliseconds = 10;
+            config.playback.format = .float32;
+            config.playback.channels = 2;
+            break :device try zaudio.Device.create(null, config);
+        };
+
+        const engine = engine: {
+            var config = zaudio.Engine.Config.init();
+            config.device = device;
+            config.no_auto_start = .true32;
+            break :engine try zaudio.Engine.create(config);
+        };
+
+        const sfx_group = try engine.createSoundGroup(.{}, null);
+
+        const music = try engine.createSoundFromFile(
+            content_dir ++ "custom_music.wav",
+            .{ .flags = .{
+                .looping = true,
+                .stream = true,
+            } },
+        );
+
+        self.* = .{
+            .device = device,
+            .engine = engine,
+            .sounds = .empty,
+            .sfx_group = sfx_group,
+            .music = music,
+            .spawned_sounds = .empty,
+        };
+
+        try self.sounds.append(allocator, try self.engine.createSoundFromFile(
+            content_dir ++ "lasershot.wav",
+            .{ .sgroup = self.sfx_group },
+        ));
+        try self.sounds.append(allocator, try self.engine.createSoundFromFile(
+            content_dir ++ "blip.wav",
+            .{ .sgroup = self.sfx_group },
+        ));
+
+        try self.sfx_group.asNodeMut().attachOutputBus(0, self.engine.asNodeGraphMut().getEndpointMut(), 0);
+
+        try self.music.asNodeMut().attachOutputBus(0, self.engine.asNodeGraphMut().getEndpointMut(), 0);
+        try self.music.start();
+    }
+
+    pub fn deinit(self: *AudioState, allocator: std.mem.Allocator) void {
+        for (self.spawned_sounds.items) |sound| sound.destroy();
+        self.spawned_sounds.deinit(allocator);
+        for (self.sounds.items) |sound| sound.destroy();
+        self.sounds.deinit(allocator);
+        self.sfx_group.destroy();
+        self.music.destroy();
+        self.engine.destroy();
+        self.device.destroy();
+
+        zaudio.deinit();
+    }
+
+    pub fn spawnSound(self: *AudioState, allocator: std.mem.Allocator, sound_idx: u8) !void {
+        var sound: *zaudio.Sound = undefined;
+        switch (sound_idx) {
+            0...1 => {
+                sound = try self.engine.createSoundCopy(self.sounds.items[sound_idx], .{}, self.sfx_group);
+            },
+            else => return error.InvalidSoundIndex,
+        }
+
+        try self.spawned_sounds.append(allocator, sound);
+        try sound.start();
+    }
+
+    pub fn cleanupFinishedSounds(self: *AudioState) void {
+        var i: usize = 0;
+        while (i < self.spawned_sounds.items.len) : (i += 1) {
+            const sound = self.spawned_sounds.items[i];
+            if (!sound.isPlaying()) {
+                sound.destroy();
+                _ = self.spawned_sounds.swapRemove(i);
+            }
+        }
+    }
+};
