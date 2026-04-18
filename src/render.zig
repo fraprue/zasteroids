@@ -572,6 +572,8 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
         });
         if (zgui.begin("Start Menu", .{ .flags = .{ .always_auto_resize = true } })) {
             var player_name = [_:0]u8{0} ** 12;
+            @memcpy(player_name[0..state.player_name.len], state.player_name);
+
             if (zgui.inputText(
                 "Player Name",
                 .{
