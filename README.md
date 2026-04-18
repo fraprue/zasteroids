@@ -6,7 +6,6 @@ Alternatively, you can play with a gamepad. Left Stick moves the ship and right 
 
 # Currently missing features
 - Configuration of key bindings
-- Persistent game config
 - Local Multiplayer?
 
 # Currently known issues

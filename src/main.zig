@@ -25,16 +25,20 @@ pub fn main() !void {
         try std.posix.chdir(path);
     }
 
+    var config = State.Config{};
+    config.loadFromFile() catch std.debug.print("No config file found. Using default config.\n", .{});
+
     const state = try gpa.create(State.State);
     defer gpa.destroy(state);
-
-    try state.init(gpa);
+    try state.init(gpa, config);
     defer state.deinit(gpa);
+
+    var audio_config = Audio.Config{};
+    audio_config.loadFromFile() catch std.debug.print("No audio config file found. Using default audio config.\n", .{});
 
     const audio = try gpa.create(Audio.AudioState);
     defer gpa.destroy(audio);
-
-    try audio.init(gpa);
+    try audio.init(gpa, audio_config);
     defer audio.deinit(gpa);
 
     audio.engine.start() catch |err| {
@@ -43,10 +47,12 @@ pub fn main() !void {
     };
     defer audio.engine.stop() catch unreachable;
 
+    var graphics_config = Render.Config{};
+    graphics_config.loadFromFile() catch std.debug.print("No graphics config file found. Using default graphics config.\n", .{});
+
     const graphics = try gpa.create(Render.GraphicsState);
     defer gpa.destroy(graphics);
-
-    try graphics.init(gpa);
+    try graphics.init(gpa, graphics_config);
     defer graphics.deinit(gpa);
 
     const window = graphics.window;

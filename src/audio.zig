@@ -6,7 +6,60 @@ const content_dir = @import("build_options").content_dir;
 
 const State = @import("state.zig");
 
+pub const Config = struct {
+    master_volume: f32 = 1.0,
+    music_volume: f32 = 1.0,
+    sound_volume: f32 = 1.0,
+
+    fn storeToFile(self: *const Config) !void {
+        var config_file = try std.fs.cwd().createFile("audio_config.txt", .{});
+        defer config_file.close();
+
+        var file_buffer: [512]u8 = undefined;
+        var writer = config_file.writer(&file_buffer);
+
+        try writer.interface.print(
+            "master_volume={d}\nmusic_volume={d}\nsound_volume={d}\n",
+            .{
+                self.master_volume,
+                self.music_volume,
+                self.sound_volume,
+            },
+        );
+        try writer.interface.flush();
+    }
+
+    pub fn loadFromFile(self: *Config) !void {
+        var config_file = try std.fs.cwd().openFile("audio_config.txt", .{ .mode = .read_only });
+        defer config_file.close();
+
+        var file_buffer: [512]u8 = undefined;
+        var reader = config_file.reader(&file_buffer);
+
+        var line = try reader.interface.takeDelimiter('\n');
+        while (line != null) {
+            const trimmed_line = std.mem.trim(u8, line.?, "\r");
+            var it = std.mem.splitScalar(u8, trimmed_line, '=');
+            const key = it.next() orelse continue;
+            const value_str = it.next() orelse continue;
+
+            if (std.mem.eql(u8, key, "master_volume")) {
+                self.master_volume = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "music_volume")) {
+                self.music_volume = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "sound_volume")) {
+                self.sound_volume = try std.fmt.parseFloat(f32, value_str);
+            } else {
+                std.debug.print("Unknown config key in audio config file: {s}\n", .{key});
+            }
+
+            line = try reader.interface.takeDelimiter('\n');
+        }
+    }
+};
+
 pub const AudioState = struct {
+    config: Config,
     device: *zaudio.Device,
     engine: *zaudio.Engine,
     mutex: std.Thread.Mutex = .{},
@@ -26,26 +79,26 @@ pub const AudioState = struct {
         audio.engine.asNodeGraphMut().readPcmFrames(output.?, frame_count, null) catch {};
     }
 
-    pub fn init(self: *AudioState, allocator: std.mem.Allocator) !void {
+    pub fn init(self: *AudioState, allocator: std.mem.Allocator, config: Config) !void {
         zaudio.init(allocator);
 
         const device = device: {
-            var config = zaudio.Device.Config.init(.playback);
-            config.data_callback = audioCallback;
-            config.user_data = self;
-            config.sample_rate = 48_000;
-            config.period_size_in_frames = 480;
-            config.period_size_in_milliseconds = 10;
-            config.playback.format = .float32;
-            config.playback.channels = 2;
-            break :device try zaudio.Device.create(null, config);
+            var device_config = zaudio.Device.Config.init(.playback);
+            device_config.data_callback = audioCallback;
+            device_config.user_data = self;
+            device_config.sample_rate = 48_000;
+            device_config.period_size_in_frames = 480;
+            device_config.period_size_in_milliseconds = 10;
+            device_config.playback.format = .float32;
+            device_config.playback.channels = 2;
+            break :device try zaudio.Device.create(null, device_config);
         };
 
         const engine = engine: {
-            var config = zaudio.Engine.Config.init();
-            config.device = device;
-            config.no_auto_start = .true32;
-            break :engine try zaudio.Engine.create(config);
+            var engine_config = zaudio.Engine.Config.init();
+            engine_config.device = device;
+            engine_config.no_auto_start = .true32;
+            break :engine try zaudio.Engine.create(engine_config);
         };
 
         const sfx_group = try engine.createSoundGroup(.{}, null);
@@ -59,6 +112,7 @@ pub const AudioState = struct {
         );
 
         self.* = .{
+            .config = config,
             .device = device,
             .engine = engine,
             .sounds = .empty,
@@ -80,6 +134,8 @@ pub const AudioState = struct {
 
         try self.music.asNodeMut().attachOutputBus(0, self.engine.asNodeGraphMut().getEndpointMut(), 0);
         try self.music.start();
+
+        self.configChanged();
     }
 
     pub fn deinit(self: *AudioState, allocator: std.mem.Allocator) void {
@@ -93,6 +149,45 @@ pub const AudioState = struct {
         self.device.destroy();
 
         zaudio.deinit();
+    }
+
+    pub fn storeConfig(self: *AudioState) !void {
+        try self.config.storeToFile();
+    }
+
+    pub fn defaultConfig(self: *AudioState) void {
+        self.config = Config{};
+        self.configChanged();
+    }
+
+    pub fn resetConfig(self: *AudioState) void {
+        var config = Config{};
+        config.loadFromFile() catch {
+            std.debug.print("No audio config file found. Using default audio config.\n", .{});
+        };
+        self.config = config;
+        self.configChanged();
+    }
+
+    fn configChanged(self: *AudioState) void {
+        self.setMasterVolume(self.config.master_volume);
+        self.setMusicVolume(self.config.music_volume);
+        self.setSoundVolume(self.config.sound_volume);
+    }
+
+    pub fn setMasterVolume(self: *AudioState, volume: f32) void {
+        self.config.master_volume = volume;
+        self.engine.setVolume(volume) catch unreachable;
+    }
+
+    pub fn setMusicVolume(self: *AudioState, volume: f32) void {
+        self.config.music_volume = volume;
+        self.music.setVolume(volume);
+    }
+
+    pub fn setSoundVolume(self: *AudioState, volume: f32) void {
+        self.config.sound_volume = volume;
+        self.sfx_group.setVolume(volume);
     }
 
     pub fn spawnSound(self: *AudioState, allocator: std.mem.Allocator, sound_idx: u8) !void {

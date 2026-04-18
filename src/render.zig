@@ -57,7 +57,42 @@ pub const Mesh = struct {
 const ShaderInputType = [4]f32; //posX, posY, rotation, scale
 
 pub const Config = struct {
-    vsync: bool,
+    vsync: bool = true,
+
+    fn storeToFile(self: *const Config) !void {
+        var config_file = try std.fs.cwd().createFile("graphics_config.txt", .{});
+        defer config_file.close();
+
+        var file_buffer: [512]u8 = undefined;
+        var writer = config_file.writer(&file_buffer);
+
+        try writer.interface.print("vsync={d}\n", .{@intFromBool(self.vsync)});
+        try writer.interface.flush();
+    }
+
+    pub fn loadFromFile(self: *Config) !void {
+        var config_file = try std.fs.cwd().openFile("graphics_config.txt", .{ .mode = .read_only });
+        defer config_file.close();
+
+        var file_buffer: [512]u8 = undefined;
+        var reader = config_file.reader(&file_buffer);
+
+        var line = try reader.interface.takeDelimiter('\n');
+        while (line != null) {
+            const trimmed_line = std.mem.trim(u8, line.?, "\r");
+            var it = std.mem.splitScalar(u8, trimmed_line, '=');
+            const key = it.next() orelse continue;
+            const value_str = it.next() orelse continue;
+
+            if (std.mem.eql(u8, key, "vsync")) {
+                self.vsync = try std.fmt.parseInt(u8, value_str, 10) != 0;
+            } else {
+                std.debug.print("Unknown config key in graphics config file: {s}\n", .{key});
+            }
+
+            line = try reader.interface.takeDelimiter('\n');
+        }
+    }
 };
 
 pub const GraphicsState = struct {
@@ -71,7 +106,7 @@ pub const GraphicsState = struct {
 
     meshes: std.ArrayList(Mesh),
 
-    pub fn init(self: *GraphicsState, allocator: std.mem.Allocator) !void {
+    pub fn init(self: *GraphicsState, allocator: std.mem.Allocator, config: Config) !void {
         try zglfw.init();
         zglfw.windowHint(.client_api, .no_api);
 
@@ -81,6 +116,8 @@ pub const GraphicsState = struct {
         const window = try zglfw.Window.create(1400, 800, "", null, null);
         window.setSizeLimits(400, 400, -1, -1);
         zglfw.makeContextCurrent(window);
+
+        const present_mode = if (config.vsync) zgpu.wgpu.PresentMode.fifo else zgpu.wgpu.PresentMode.immediate;
 
         const gctx = try zgpu.GraphicsContext.create(
             allocator,
@@ -95,7 +132,7 @@ pub const GraphicsState = struct {
                 .fn_getWaylandSurface = @ptrCast(&zglfw.getWaylandWindow),
                 .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
             },
-            .{},
+            .{ .present_mode = present_mode },
         );
         errdefer gctx.destroy(allocator);
 
@@ -205,10 +242,6 @@ pub const GraphicsState = struct {
             break :pipeline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
         };
 
-        const config = Config{
-            .vsync = true,
-        };
-
         self.* = .{
             .config = config,
             .window = window,
@@ -221,7 +254,7 @@ pub const GraphicsState = struct {
             .meshes = meshes,
         };
 
-        self.setVSync(true);
+        self.configChanged();
     }
 
     pub fn deinit(self: *GraphicsState, allocator: std.mem.Allocator) void {
@@ -236,6 +269,28 @@ pub const GraphicsState = struct {
         zgui.plot.deinit();
         zgui.deinit();
         zglfw.terminate();
+    }
+
+    pub fn storeConfig(self: *GraphicsState) !void {
+        try self.config.storeToFile();
+    }
+
+    pub fn defaultConfig(self: *GraphicsState) void {
+        self.config = Config{};
+        self.configChanged();
+    }
+
+    pub fn resetConfig(self: *GraphicsState) void {
+        var config = Config{};
+        config.loadFromFile() catch {
+            std.debug.print("No graphics config file found. Using default graphics config.\n", .{});
+        };
+        self.config = config;
+        self.configChanged();
+    }
+
+    fn configChanged(self: *GraphicsState) void {
+        self.setVSync(self.config.vsync);
     }
 
     pub fn setVSync(self: *GraphicsState, value: bool) void {
@@ -375,6 +430,7 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
         _ = zgui.checkbox("Debug", .{ .v = &state.debug_state.enabled });
 
         if (state.debug_state.enabled) {
+            zgui.separatorText("Debug Info");
             {
                 var frame_time_data = allocator.create(State.FrameStatsDataPoint) catch unreachable;
                 frame_time_data.time = gctx.stats.time;
@@ -450,6 +506,8 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
                 .{state.debug_state.registered_gamepad_name},
             );
 
+            zgui.separatorText("Game Settings");
+
             var player_id_list: std.ArrayList(State.ObjectId) = .empty;
             defer player_id_list.deinit(allocator);
             state.getAllObjectsOfType(allocator, "player", &player_id_list) catch unreachable;
@@ -513,33 +571,36 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             });
         }
 
-        // The zaudio library doesn't expose the miniaudio API for getVolume directly, so we have to mimic what the library does internally
-        var master_volume = audio.engine.asNodeGraph().getEndpoint().getOutputBusVolume(0);
+        zgui.separatorText("Audio Settings");
+
+        var master_volume = audio.config.master_volume;
         if (zgui.sliderFloat("Master Volume", .{
             .v = &master_volume,
             .min = 0.0,
             .max = 1.0,
         })) {
-            audio.engine.setVolume(master_volume) catch unreachable;
+            audio.setMasterVolume(master_volume);
         }
 
-        var music_volume = audio.music.getVolume();
+        var music_volume = audio.config.music_volume;
         if (zgui.sliderFloat("Music Volume", .{
             .v = &music_volume,
             .min = 0.0,
             .max = 1.0,
         })) {
-            audio.music.setVolume(music_volume);
+            audio.setMusicVolume(music_volume);
         }
 
-        var sound_volume = audio.sfx_group.getVolume();
+        var sound_volume = audio.config.sound_volume;
         if (zgui.sliderFloat("Sound Volume", .{
             .v = &sound_volume,
             .min = 0.0,
             .max = 1.0,
         })) {
-            audio.sfx_group.setVolume(sound_volume);
+            audio.setSoundVolume(sound_volume);
         }
+
+        zgui.separatorText("Graphics Settings");
 
         var vsync = graphics.config.vsync;
         if (zgui.checkbox("VSync", .{ .v = &vsync })) {
@@ -559,6 +620,27 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             }
         } else {
             state.config.fps_target = -1;
+        }
+
+        if (zgui.button("Store Config", .{})) {
+            playClickSound(audio, allocator);
+            state.storeConfig() catch unreachable;
+            audio.storeConfig() catch unreachable;
+            graphics.storeConfig() catch unreachable;
+        }
+        zgui.sameLine(.{});
+        if (zgui.button("Reset Config", .{})) {
+            playClickSound(audio, allocator);
+            state.resetConfig();
+            audio.resetConfig();
+            graphics.resetConfig();
+        }
+        zgui.sameLine(.{});
+        if (zgui.button("Default Config", .{})) {
+            playClickSound(audio, allocator);
+            state.defaultConfig();
+            audio.defaultConfig();
+            graphics.defaultConfig();
         }
     }
     zgui.end();

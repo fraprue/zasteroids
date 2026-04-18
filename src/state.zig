@@ -99,20 +99,90 @@ pub const DebugState = struct {
 };
 
 pub const Config = struct {
-    fps_target: i16,
+    fps_target: i16 = -1,
 
-    player_speed: f32,
-    player_turn_speed: f32,
+    player_speed: f32 = 0.3,
+    player_turn_speed: f32 = 2.0,
 
-    shot_delay: f32,
-    shot_speed: f32,
+    shot_delay: f32 = 0.8,
+    shot_speed: f32 = 0.6,
 
-    asteroid_spawn_delay: f32,
-    asteroid_speed: f32,
-    asteroid_min_split_scale: f32,
-    asteroid_min_spawn_scale: f32,
-    asteroid_max_spawn_scale: f32,
-    asteroid_base_score: f32,
+    asteroid_spawn_delay: f32 = 3.0,
+    asteroid_speed: f32 = 0.2,
+    asteroid_min_split_scale: f32 = 0.07,
+    asteroid_min_spawn_scale: f32 = 0.05,
+    asteroid_max_spawn_scale: f32 = 0.2,
+    asteroid_base_score: f32 = 100.0,
+
+    fn storeToFile(self: *const Config) !void {
+        var config_file = try std.fs.cwd().createFile("config.txt", .{});
+        defer config_file.close();
+
+        var file_buffer: [512]u8 = undefined;
+        var writer = config_file.writer(&file_buffer);
+
+        try writer.interface.print(
+            "fps_target={d}\nplayer_speed={d}\nplayer_turn_speed={d}\nshot_delay={d}\nshot_speed={d}\nasteroid_spawn_delay={d}\nasteroid_speed={d}\nasteroid_min_split_scale={d}\nasteroid_min_spawn_scale={d}\nasteroid_max_spawn_scale={d}\nasteroid_base_score={d}\n",
+            .{
+                self.fps_target,
+                self.player_speed,
+                self.player_turn_speed,
+                self.shot_delay,
+                self.shot_speed,
+                self.asteroid_spawn_delay,
+                self.asteroid_speed,
+                self.asteroid_min_split_scale,
+                self.asteroid_min_spawn_scale,
+                self.asteroid_max_spawn_scale,
+                self.asteroid_base_score,
+            },
+        );
+        try writer.interface.flush();
+    }
+
+    pub fn loadFromFile(self: *Config) !void {
+        var config_file = try std.fs.cwd().openFile("config.txt", .{ .mode = .read_only });
+        defer config_file.close();
+
+        var file_buffer: [512]u8 = undefined;
+        var reader = config_file.reader(&file_buffer);
+
+        var line = try reader.interface.takeDelimiter('\n');
+        while (line != null) {
+            const trimmed_line = std.mem.trim(u8, line.?, "\r");
+            var it = std.mem.splitScalar(u8, trimmed_line, '=');
+            const key = it.next() orelse continue;
+            const value_str = it.next() orelse continue;
+
+            if (std.mem.eql(u8, key, "fps_target")) {
+                self.fps_target = try std.fmt.parseInt(i16, value_str, 10);
+            } else if (std.mem.eql(u8, key, "player_speed")) {
+                self.player_speed = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "player_turn_speed")) {
+                self.player_turn_speed = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "shot_delay")) {
+                self.shot_delay = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "shot_speed")) {
+                self.shot_speed = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "asteroid_spawn_delay")) {
+                self.asteroid_spawn_delay = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "asteroid_speed")) {
+                self.asteroid_speed = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "asteroid_min_split_scale")) {
+                self.asteroid_min_split_scale = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "asteroid_min_spawn_scale")) {
+                self.asteroid_min_spawn_scale = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "asteroid_max_spawn_scale")) {
+                self.asteroid_max_spawn_scale = try std.fmt.parseFloat(f32, value_str);
+            } else if (std.mem.eql(u8, key, "asteroid_base_score")) {
+                self.asteroid_base_score = try std.fmt.parseFloat(f32, value_str);
+            } else {
+                std.debug.print("Unknown config key in config file: {s}\n", .{key});
+            }
+
+            line = try reader.interface.takeDelimiter('\n');
+        }
+    }
 };
 
 pub const State = struct {
@@ -142,29 +212,12 @@ pub const State = struct {
     shot_timer: f32,
     asteroid_spawn_timer: f32,
 
-    pub fn init(self: *State, allocator: std.mem.Allocator) !void {
+    pub fn init(self: *State, allocator: std.mem.Allocator, config: Config) !void {
         const prng: std.Random.DefaultPrng = .init(blk: {
             var seed: u64 = undefined;
             try std.posix.getrandom(std.mem.asBytes(&seed));
             break :blk seed;
         });
-
-        const config = Config{
-            .fps_target = -1,
-
-            .player_speed = 0.3,
-            .player_turn_speed = 2.0,
-
-            .shot_delay = 0.8,
-            .shot_speed = 0.6,
-
-            .asteroid_spawn_delay = 3.0,
-            .asteroid_speed = 0.2,
-            .asteroid_min_split_scale = 0.07,
-            .asteroid_max_spawn_scale = 0.2,
-            .asteroid_min_spawn_scale = 0.05,
-            .asteroid_base_score = 100.0,
-        };
 
         self.* = .{
             .config = config,
@@ -219,6 +272,20 @@ pub const State = struct {
 
         self.clearCachedHighscoreData(allocator);
         self.objects.deinit();
+    }
+
+    pub fn storeConfig(self: *State) !void {
+        try self.config.storeToFile();
+    }
+
+    pub fn defaultConfig(self: *State) void {
+        self.config = Config{};
+    }
+
+    pub fn resetConfig(self: *State) void {
+        var config = Config{};
+        config.loadFromFile() catch std.debug.print("No config file found. Using default config.\n", .{});
+        self.config = config;
     }
 
     pub fn startGame(self: *State) void {
@@ -353,10 +420,7 @@ pub const State = struct {
         const max_highscore_entries = comptime 10;
         var entry_count: usize = 0;
         for (highscore_list.items) |entry| {
-            var line_buffer: [128]u8 = undefined;
-            const line = try std.fmt.bufPrint(&line_buffer, "{s}:{d}\n", .{ entry.name, entry.score });
-
-            try writer.interface.writeAll(line);
+            try writer.interface.print("{s}:{d}\n", .{ entry.name, entry.score });
             try writer.interface.flush();
             entry_count += 1;
 
