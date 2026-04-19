@@ -707,8 +707,20 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
             defer highscore_list.deinit(allocator);
             state.getHighscore(allocator, &highscore_list) catch unreachable;
 
-            for (highscore_list.items) |entry| {
-                zgui.text("{s}: {d} points", .{ entry.name, entry.score });
+            if (zgui.beginTable("Highscore", .{
+                .column = 2,
+                .flags = .{ .resizable = true },
+            })) {
+                zgui.tableSetupColumn("Name", .{});
+                zgui.tableSetupColumn("Score", .{});
+                zgui.tableHeadersRow();
+                for (highscore_list.items) |entry| {
+                    _ = zgui.tableNextColumn();
+                    zgui.text("{s}", .{entry.name});
+                    _ = zgui.tableNextColumn();
+                    zgui.text("{d}", .{entry.score});
+                }
+                zgui.endTable();
             }
             if (zgui.button("Back", .{})) {
                 playClickSound(audio, allocator);
