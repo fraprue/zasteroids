@@ -10,52 +10,6 @@ pub const Config = struct {
     master_volume: f32 = 1.0,
     music_volume: f32 = 1.0,
     sound_volume: f32 = 1.0,
-
-    fn storeToFile(self: *const Config) !void {
-        var config_file = try std.fs.cwd().createFile("audio_config.txt", .{});
-        defer config_file.close();
-
-        var file_buffer: [512]u8 = undefined;
-        var writer = config_file.writer(&file_buffer);
-
-        try writer.interface.print(
-            "master_volume={d}\nmusic_volume={d}\nsound_volume={d}\n",
-            .{
-                self.master_volume,
-                self.music_volume,
-                self.sound_volume,
-            },
-        );
-        try writer.interface.flush();
-    }
-
-    pub fn loadFromFile(self: *Config) !void {
-        var config_file = try std.fs.cwd().openFile("audio_config.txt", .{ .mode = .read_only });
-        defer config_file.close();
-
-        var file_buffer: [512]u8 = undefined;
-        var reader = config_file.reader(&file_buffer);
-
-        var line = try reader.interface.takeDelimiter('\n');
-        while (line != null) {
-            const trimmed_line = std.mem.trim(u8, line.?, "\r");
-            var it = std.mem.splitScalar(u8, trimmed_line, '=');
-            const key = it.next() orelse continue;
-            const value_str = it.next() orelse continue;
-
-            if (std.mem.eql(u8, key, "master_volume")) {
-                self.master_volume = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "music_volume")) {
-                self.music_volume = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "sound_volume")) {
-                self.sound_volume = try std.fmt.parseFloat(f32, value_str);
-            } else {
-                std.debug.print("Unknown config key in audio config file: {s}\n", .{key});
-            }
-
-            line = try reader.interface.takeDelimiter('\n');
-        }
-    }
 };
 
 pub const AudioState = struct {
@@ -156,15 +110,10 @@ pub const AudioState = struct {
     }
 
     pub fn defaultConfig(self: *AudioState) void {
-        self.config = Config{};
-        self.configChanged();
+        self.setConfig(Config{});
     }
 
-    pub fn resetConfig(self: *AudioState) void {
-        var config = Config{};
-        config.loadFromFile() catch {
-            std.debug.print("No audio config file found. Using default audio config.\n", .{});
-        };
+    pub fn setConfig(self: *AudioState, config: Config) void {
         self.config = config;
         self.configChanged();
     }

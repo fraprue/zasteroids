@@ -6,6 +6,7 @@ const zgui = @import("zgui");
 
 const content_dir = @import("build_options").content_dir;
 
+const GlobalConfig = @import("config.zig");
 const State = @import("state.zig");
 const Audio = @import("audio.zig");
 
@@ -58,41 +59,6 @@ const ShaderInputType = [4]f32; //posX, posY, rotation, scale
 
 pub const Config = struct {
     vsync: bool = true,
-
-    fn storeToFile(self: *const Config) !void {
-        var config_file = try std.fs.cwd().createFile("graphics_config.txt", .{});
-        defer config_file.close();
-
-        var file_buffer: [512]u8 = undefined;
-        var writer = config_file.writer(&file_buffer);
-
-        try writer.interface.print("vsync={d}\n", .{@intFromBool(self.vsync)});
-        try writer.interface.flush();
-    }
-
-    pub fn loadFromFile(self: *Config) !void {
-        var config_file = try std.fs.cwd().openFile("graphics_config.txt", .{ .mode = .read_only });
-        defer config_file.close();
-
-        var file_buffer: [512]u8 = undefined;
-        var reader = config_file.reader(&file_buffer);
-
-        var line = try reader.interface.takeDelimiter('\n');
-        while (line != null) {
-            const trimmed_line = std.mem.trim(u8, line.?, "\r");
-            var it = std.mem.splitScalar(u8, trimmed_line, '=');
-            const key = it.next() orelse continue;
-            const value_str = it.next() orelse continue;
-
-            if (std.mem.eql(u8, key, "vsync")) {
-                self.vsync = try std.fmt.parseInt(u8, value_str, 10) != 0;
-            } else {
-                std.debug.print("Unknown config key in graphics config file: {s}\n", .{key});
-            }
-
-            line = try reader.interface.takeDelimiter('\n');
-        }
-    }
 };
 
 pub const GraphicsState = struct {
@@ -276,15 +242,10 @@ pub const GraphicsState = struct {
     }
 
     pub fn defaultConfig(self: *GraphicsState) void {
-        self.config = Config{};
-        self.configChanged();
+        self.setConfig(Config{});
     }
 
-    pub fn resetConfig(self: *GraphicsState) void {
-        var config = Config{};
-        config.loadFromFile() catch {
-            std.debug.print("No graphics config file found. Using default graphics config.\n", .{});
-        };
+    pub fn setConfig(self: *GraphicsState, config: Config) void {
         self.config = config;
         self.configChanged();
     }
@@ -624,16 +585,19 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
 
         if (zgui.button("Store Config", .{})) {
             playClickSound(audio, allocator);
-            state.storeConfig() catch unreachable;
-            audio.storeConfig() catch unreachable;
-            graphics.storeConfig() catch unreachable;
+            GlobalConfig.saveConfig(.{
+                .audio = audio.config,
+                .render = graphics.config,
+                .game = state.config,
+            });
         }
         zgui.sameLine(.{});
         if (zgui.button("Reset Config", .{})) {
             playClickSound(audio, allocator);
-            state.resetConfig();
-            audio.resetConfig();
-            graphics.resetConfig();
+            const config = GlobalConfig.loadConfig();
+            state.setConfig(config.game);
+            audio.setConfig(config.audio);
+            graphics.setConfig(config.render);
         }
         zgui.sameLine(.{});
         if (zgui.button("Default Config", .{})) {

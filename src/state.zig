@@ -113,76 +113,6 @@ pub const Config = struct {
     asteroid_min_spawn_scale: f32 = 0.05,
     asteroid_max_spawn_scale: f32 = 0.2,
     asteroid_base_score: f32 = 100.0,
-
-    fn storeToFile(self: *const Config) !void {
-        var config_file = try std.fs.cwd().createFile("config.txt", .{});
-        defer config_file.close();
-
-        var file_buffer: [512]u8 = undefined;
-        var writer = config_file.writer(&file_buffer);
-
-        try writer.interface.print(
-            "fps_target={d}\nplayer_speed={d}\nplayer_turn_speed={d}\nshot_delay={d}\nshot_speed={d}\nasteroid_spawn_delay={d}\nasteroid_speed={d}\nasteroid_min_split_scale={d}\nasteroid_min_spawn_scale={d}\nasteroid_max_spawn_scale={d}\nasteroid_base_score={d}\n",
-            .{
-                self.fps_target,
-                self.player_speed,
-                self.player_turn_speed,
-                self.shot_delay,
-                self.shot_speed,
-                self.asteroid_spawn_delay,
-                self.asteroid_speed,
-                self.asteroid_min_split_scale,
-                self.asteroid_min_spawn_scale,
-                self.asteroid_max_spawn_scale,
-                self.asteroid_base_score,
-            },
-        );
-        try writer.interface.flush();
-    }
-
-    pub fn loadFromFile(self: *Config) !void {
-        var config_file = try std.fs.cwd().openFile("config.txt", .{ .mode = .read_only });
-        defer config_file.close();
-
-        var file_buffer: [512]u8 = undefined;
-        var reader = config_file.reader(&file_buffer);
-
-        var line = try reader.interface.takeDelimiter('\n');
-        while (line != null) {
-            const trimmed_line = std.mem.trim(u8, line.?, "\r");
-            var it = std.mem.splitScalar(u8, trimmed_line, '=');
-            const key = it.next() orelse continue;
-            const value_str = it.next() orelse continue;
-
-            if (std.mem.eql(u8, key, "fps_target")) {
-                self.fps_target = try std.fmt.parseInt(i16, value_str, 10);
-            } else if (std.mem.eql(u8, key, "player_speed")) {
-                self.player_speed = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "player_turn_speed")) {
-                self.player_turn_speed = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "shot_delay")) {
-                self.shot_delay = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "shot_speed")) {
-                self.shot_speed = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "asteroid_spawn_delay")) {
-                self.asteroid_spawn_delay = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "asteroid_speed")) {
-                self.asteroid_speed = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "asteroid_min_split_scale")) {
-                self.asteroid_min_split_scale = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "asteroid_min_spawn_scale")) {
-                self.asteroid_min_spawn_scale = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "asteroid_max_spawn_scale")) {
-                self.asteroid_max_spawn_scale = try std.fmt.parseFloat(f32, value_str);
-            } else if (std.mem.eql(u8, key, "asteroid_base_score")) {
-                self.asteroid_base_score = try std.fmt.parseFloat(f32, value_str);
-            } else {
-                std.debug.print("Unknown config key in config file: {s}\n", .{key});
-            }
-
-            line = try reader.interface.takeDelimiter('\n');
-        }
-    }
 };
 
 pub const State = struct {
@@ -282,9 +212,7 @@ pub const State = struct {
         self.config = Config{};
     }
 
-    pub fn resetConfig(self: *State) void {
-        var config = Config{};
-        config.loadFromFile() catch std.debug.print("No config file found. Using default config.\n", .{});
+    pub fn setConfig(self: *State, config: Config) void {
         self.config = config;
     }
 
@@ -419,9 +347,9 @@ pub const State = struct {
 
         const max_highscore_entries = comptime 10;
         var entry_count: usize = 0;
+        defer writer.interface.flush() catch |err| std.debug.print("Failed to flush highscore file. Error: {}\n", .{err});
         for (highscore_list.items) |entry| {
             try writer.interface.print("{s}:{d}\n", .{ entry.name, entry.score });
-            try writer.interface.flush();
             entry_count += 1;
 
             if (entry_count >= max_highscore_entries) break;

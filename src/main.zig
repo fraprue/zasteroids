@@ -6,6 +6,7 @@ const zm = @import("zmath");
 
 const content_dir = @import("build_options").content_dir;
 
+const Config = @import("config.zig");
 const Audio = @import("audio.zig");
 const Render = @import("render.zig");
 const State = @import("state.zig");
@@ -25,20 +26,16 @@ pub fn main() !void {
         try std.posix.chdir(path);
     }
 
-    var config = State.Config{};
-    config.loadFromFile() catch std.debug.print("No config file found. Using default config.\n", .{});
+    const config = Config.loadConfig();
 
     const state = try gpa.create(State.State);
     defer gpa.destroy(state);
-    try state.init(gpa, config);
+    try state.init(gpa, config.game);
     defer state.deinit(gpa);
-
-    var audio_config = Audio.Config{};
-    audio_config.loadFromFile() catch std.debug.print("No audio config file found. Using default audio config.\n", .{});
 
     const audio = try gpa.create(Audio.AudioState);
     defer gpa.destroy(audio);
-    try audio.init(gpa, audio_config);
+    try audio.init(gpa, config.audio);
     defer audio.deinit(gpa);
 
     audio.engine.start() catch |err| {
@@ -47,12 +44,9 @@ pub fn main() !void {
     };
     defer audio.engine.stop() catch unreachable;
 
-    var graphics_config = Render.Config{};
-    graphics_config.loadFromFile() catch std.debug.print("No graphics config file found. Using default graphics config.\n", .{});
-
     const graphics = try gpa.create(Render.GraphicsState);
     defer gpa.destroy(graphics);
-    try graphics.init(gpa, graphics_config);
+    try graphics.init(gpa, config.render);
     defer graphics.deinit(gpa);
 
     const window = graphics.window;
