@@ -54,8 +54,16 @@ fn loadConfigSection(comptime T: type, config: *T, section_name: []const u8, con
                 }
 
                 var it = std.mem.splitScalar(u8, trimmed_value_line, '=');
-                const key = it.next() orelse continue;
-                const value_str = it.next() orelse continue;
+                const key = it.next() orelse {
+                    std.debug.print("Invalid config line (missing key): {s}\n", .{trimmed_value_line});
+                    value_line = try reader.interface.takeDelimiter('\n');
+                    continue;
+                };
+                const value_str = it.next() orelse {
+                    std.debug.print("Invalid config line (missing value): {s}\n", .{trimmed_value_line});
+                    value_line = try reader.interface.takeDelimiter('\n');
+                    continue;
+                };
 
                 inline for (@typeInfo(T).@"struct".fields) |field| {
                     if (std.mem.eql(u8, key, field.name)) {
