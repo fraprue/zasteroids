@@ -274,6 +274,27 @@ pub const GraphicsState = struct {
             gctx.swapchain_descriptor,
         );
     }
+
+    pub fn updateWindowTitle(self: *GraphicsState, allocator: std.mem.Allocator, state: *State.State) void {
+        const tracy_window_zone = ztracy.ZoneNC(@src(), "Game Render Window Title", 0x00_00_00_ff);
+        defer tracy_window_zone.End();
+
+        const gctx = self.gctx;
+
+        const window_name = "My First Game";
+        const window_width = gctx.swapchain_descriptor.width;
+        const window_height = gctx.swapchain_descriptor.height;
+
+        const window_title: [:0]u8 = std.fmt.allocPrintSentinel(allocator, "{s}, Player: {s}, Res: {}×{}", .{
+            window_name,
+            state.player_name,
+            window_width,
+            window_height,
+        }, 0) catch unreachable;
+        defer allocator.free(window_title);
+
+        zglfw.setWindowTitle(self.window, window_title);
+    }
 };
 
 fn initMeshes(
@@ -362,37 +383,19 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
 
     const gctx = graphics.gctx;
 
-    const window_name = "My First Game";
-    const window_width = gctx.swapchain_descriptor.width;
-    const window_height = gctx.swapchain_descriptor.height;
-
-    {
-        const tracy_window_zone = ztracy.ZoneNC(@src(), "Game Render Window Title", 0x00_00_00_ff);
-        defer tracy_window_zone.End();
-
-        const window_title: [:0]u8 = std.fmt.allocPrintSentinel(allocator, "{s}, Player: {s}, Res: {}×{}", .{
-            window_name,
-            state.player_name,
-            window_width,
-            window_height,
-        }, 0) catch unreachable;
-        defer allocator.free(window_title);
-
-        zglfw.setWindowTitle(graphics.window, window_title);
-    }
     {
         const tracy_backend_zone = ztracy.ZoneNC(@src(), "Game Render GUI Backend", 0x00_00_00_ff);
         defer tracy_backend_zone.End();
 
         zgui.backend.newFrame(
-            window_width,
-            window_height,
+            gctx.swapchain_descriptor.width,
+            gctx.swapchain_descriptor.height,
         );
     }
 
     renderGui(allocator, graphics, state, audio);
 
-    present(graphics, state);
+    present(allocator, graphics, state);
 }
 
 fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *State.State, audio: *Audio.AudioState) void {
@@ -435,23 +438,24 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
                 }
 
                 @memcpy(state.player_name, player_name_array[0..i]);
+                graphics.updateWindowTitle(allocator, state);
             }
 
             if (zgui.button("Start", .{})) {
-                playClickSound(audio, allocator);
+                playClickSound(allocator, audio);
                 state.startGame();
             }
             zgui.sameLine(.{});
             if (zgui.button("Quit", .{})) {
-                playClickSound(audio, allocator);
+                playClickSound(allocator, audio);
                 graphics.window.setShouldClose(true);
             }
             if (zgui.button("Settings", .{})) {
-                playClickSound(audio, allocator);
+                playClickSound(allocator, audio);
                 state.show_settings = true;
             }
             if (zgui.button("Show Highscore", .{})) {
-                playClickSound(audio, allocator);
+                playClickSound(allocator, audio);
                 state.showHighscore();
             }
         }
@@ -488,7 +492,7 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
                 zgui.endTable();
             }
             if (zgui.button("Back", .{})) {
-                playClickSound(audio, allocator);
+                playClickSound(allocator, audio);
                 state.hideHighscore();
             }
         }
@@ -507,16 +511,16 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
             zgui.text("You scored {d} points.", .{state.score});
             zgui.text("Git gud!", .{});
             if (zgui.button("Restart", .{})) {
-                playClickSound(audio, allocator);
+                playClickSound(allocator, audio);
                 state.startGame();
             }
             zgui.sameLine(.{});
             if (zgui.button("Quit", .{})) {
-                playClickSound(audio, allocator);
+                playClickSound(allocator, audio);
                 graphics.window.setShouldClose(true);
             }
             if (zgui.button("To Start Menu", .{})) {
-                playClickSound(audio, allocator);
+                playClickSound(allocator, audio);
                 state.game_state = State.GameState.starting;
             }
         }
@@ -747,7 +751,7 @@ fn renderSettingsMenu(allocator: std.mem.Allocator, graphics: *GraphicsState, st
         }
 
         if (zgui.button("Store Config", .{})) {
-            playClickSound(audio, allocator);
+            playClickSound(allocator, audio);
             GlobalConfig.saveConfig(.{
                 .audio = audio.config,
                 .render = graphics.config,
@@ -756,7 +760,7 @@ fn renderSettingsMenu(allocator: std.mem.Allocator, graphics: *GraphicsState, st
         }
         zgui.sameLine(.{});
         if (zgui.button("Reset Config", .{})) {
-            playClickSound(audio, allocator);
+            playClickSound(allocator, audio);
             const config = GlobalConfig.loadConfig();
             state.setConfig(config.game);
             audio.setConfig(config.audio);
@@ -764,26 +768,26 @@ fn renderSettingsMenu(allocator: std.mem.Allocator, graphics: *GraphicsState, st
         }
         zgui.sameLine(.{});
         if (zgui.button("Default Config", .{})) {
-            playClickSound(audio, allocator);
+            playClickSound(allocator, audio);
             state.defaultConfig();
             audio.defaultConfig();
             graphics.defaultConfig();
         }
 
         if (zgui.button("Cancel", .{})) {
-            playClickSound(audio, allocator);
+            playClickSound(allocator, audio);
             state.show_settings = false;
         }
         zgui.sameLine(.{});
         if (zgui.button("Quit", .{})) {
-            playClickSound(audio, allocator);
+            playClickSound(allocator, audio);
             graphics.window.setShouldClose(true);
         }
     }
     zgui.end();
 }
 
-fn present(graphics: *GraphicsState, state: *State.State) void {
+fn present(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *State.State) void {
     const tracy_present_zone = ztracy.ZoneNC(@src(), "Game Render Present", 0x00_00_00_ff);
     defer tracy_present_zone.End();
 
@@ -883,9 +887,12 @@ fn present(graphics: *GraphicsState, state: *State.State) void {
     defer tracy_final_present_zone.End();
 
     gctx.submit(&.{commands});
-    _ = gctx.present();
+    const present_result = gctx.present();
+    if (present_result == .swap_chain_resized) {
+        graphics.updateWindowTitle(allocator, state);
+    }
 }
 
-fn playClickSound(audio: *Audio.AudioState, allocator: std.mem.Allocator) void {
+fn playClickSound(allocator: std.mem.Allocator, audio: *Audio.AudioState) void {
     audio.spawnSound(allocator, 1) catch unreachable;
 }

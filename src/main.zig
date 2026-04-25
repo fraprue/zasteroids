@@ -65,8 +65,6 @@ pub fn main() !void {
     try graphics.init(gpa, config.render);
     defer graphics.deinit(gpa);
 
-    const window = graphics.window;
-
     for (graphics.meshes.items) |mesh| {
         try state.mesh_collision_data.append(gpa, mesh.collision_sphere_radius);
     }
@@ -96,6 +94,9 @@ pub fn main() !void {
 
     var input_debouncer: std.AutoHashMap(KeyUnion, bool) = .init(gpa);
     defer input_debouncer.deinit();
+
+    const window = graphics.window;
+    graphics.updateWindowTitle(gpa, state);
 
     while (!window.shouldClose()) {
         const tracy_game_tick_zone = ztracy.ZoneNC(@src(), "Game Tick", 0x00_ff_00_00);
