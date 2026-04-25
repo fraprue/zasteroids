@@ -119,6 +119,7 @@ pub const State = struct {
     config: Config,
     game_state: GameState,
     debug_state: DebugState,
+    show_settings: bool,
 
     player_name: []u8,
     score: u32,
@@ -128,6 +129,7 @@ pub const State = struct {
 
     controller_type: ControllerType,
     registered_joystick: ?zglfw.Joystick,
+    registered_joystick_id: ?usize,
     joystick_deadzone: f32,
 
     objects: ObjectMap,
@@ -162,6 +164,7 @@ pub const State = struct {
                 .registered_gamepad_guid = "",
                 .registered_gamepad_name = "",
             },
+            .show_settings = false,
 
             .player_name = "",
             .score = 0,
@@ -171,6 +174,7 @@ pub const State = struct {
 
             .controller_type = ControllerType.keyboard,
             .registered_joystick = null,
+            .registered_joystick_id = null,
             .joystick_deadzone = 0.1,
 
             .objects = .init(allocator),

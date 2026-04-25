@@ -14,6 +14,11 @@ const State = @import("state.zig");
 
 const ScreenEdge = enum { north, east, south, west };
 
+const KeyUnion = union(enum) {
+    key: zglfw.Key,
+    gamepad_button: zglfw.Gamepad.Button,
+};
+
 pub fn main() !void {
     const tracy_zone = ztracy.ZoneNC(@src(), "Main", 0x00_ff_00_00);
     defer tracy_zone.End();
@@ -83,31 +88,16 @@ pub fn main() !void {
         }
     }
 
-    for (0..zglfw.Joystick.maximum_supported) |jid| {
-        const joystick: zglfw.Joystick = @enumFromInt(jid);
-        if (joystick.isPresent()) {
-            state.registered_joystick = joystick;
-            state.controller_type = State.ControllerType.gamepad;
-            const joystick_guid = joystick.getGuid() catch "n/a";
-            state.debug_state.registered_gamepad_guid = try gpa.alloc(u8, joystick_guid.len);
-            @memcpy(state.debug_state.registered_gamepad_guid, joystick_guid[0..]);
-            if (joystick.asGamepad()) |gamepad| {
-                const gamepad_name = gamepad.getName();
-                state.debug_state.registered_gamepad_name = try gpa.alloc(u8, gamepad_name.len);
-                @memcpy(state.debug_state.registered_gamepad_name, gamepad_name[0..]);
-            } else {
-                @panic("Mapped gamepad: Missing mapping. Is GUID found in gamecontrollerdb.txt?");
-            }
-        }
-    }
-
     var fps_timer = try std.time.Timer.start();
 
     var update_perf_timer = try std.time.Timer.start();
     var render_perf_timer = try std.time.Timer.start();
     var avg_perf_timer = try std.time.Timer.start();
 
-    while (!window.shouldClose() and window.getKey(.escape) != .press) {
+    var input_debouncer: std.AutoHashMap(KeyUnion, bool) = .init(gpa);
+    defer input_debouncer.deinit();
+
+    while (!window.shouldClose()) {
         const tracy_game_tick_zone = ztracy.ZoneNC(@src(), "Game Tick", 0x00_ff_00_00);
         defer tracy_game_tick_zone.End();
 
@@ -126,6 +116,9 @@ pub fn main() !void {
 
             zglfw.pollEvents();
         }
+
+        updateInputType(gpa, state, window);
+        handleTopLevelInputs(state, window, &input_debouncer);
 
         if (state.game_state == State.GameState.running) {
             update(gpa, state, audio, window, graphics.gctx.stats.delta_time);
@@ -201,8 +194,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
 
         rotated_forward = move_speed * delta_time_vec * rotated_forward;
 
-        // Handle keyboard input
-        {
+        if (state.controller_type == State.ControllerType.keyboard) {
             if (window.getKey(.w) == .press) {
                 player_ptr.pos += rotated_forward;
                 if (state.debug_state.enabled) {
@@ -233,16 +225,8 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
         }
 
         // Handle gamepad input
-        gamepad_input: {
-            if (state.registered_joystick == null) {
-                break :gamepad_input;
-            }
+        if (state.controller_type == State.ControllerType.gamepad) {
             const joystick = state.registered_joystick.?;
-
-            if (!joystick.isPresent()) {
-                break :gamepad_input;
-            }
-
             if (joystick.asGamepad()) |gamepad| {
                 const gamepad_state: zglfw.Gamepad.State = gamepad.getState() catch .{};
 
@@ -609,4 +593,115 @@ test "object collision" {
 
     try std.testing.expect(try collides(state, o1_id, o2_id));
     try std.testing.expect(!try collides(state, o1_id, o3_id));
+}
+
+fn updateInputType(allocator: std.mem.Allocator, state: *State.State, window: *Window) void {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Input Type Detection", 0x00_ff_00_00);
+    defer tracy_zone.End();
+
+    for (std.enums.values(zglfw.Key)) |key| {
+        if (window.getKey(key) == .press) {
+            state.controller_type = State.ControllerType.keyboard;
+            return;
+        }
+    }
+
+    for (0..zglfw.Joystick.maximum_supported) |jid| {
+        const joystick: zglfw.Joystick = @enumFromInt(jid);
+        if (joystick.isPresent()) {
+            if (joystick.asGamepad()) |gamepad| {
+                if (state.registered_joystick == null) {
+                    state.registered_joystick = joystick;
+                    state.registered_joystick_id = jid;
+
+                    if (state.debug_state.enabled) {
+                        std.debug.print("Joystick connected: {s}, GUID: {s}\n", .{ gamepad.getName(), joystick.getGuid() catch "n/a" });
+                    }
+                }
+
+                if (state.debug_state.enabled and state.debug_state.registered_gamepad_guid.len == 0) {
+                    const joystick_guid = joystick.getGuid() catch "n/a";
+                    allocator.free(state.debug_state.registered_gamepad_guid);
+                    state.debug_state.registered_gamepad_guid = allocator.alloc(u8, joystick_guid.len) catch unreachable;
+                    @memcpy(state.debug_state.registered_gamepad_guid, joystick_guid[0..]);
+
+                    const gamepad_name = gamepad.getName();
+                    allocator.free(state.debug_state.registered_gamepad_name);
+                    state.debug_state.registered_gamepad_name = allocator.alloc(u8, gamepad_name.len) catch unreachable;
+                    @memcpy(state.debug_state.registered_gamepad_name, gamepad_name[0..]);
+                }
+
+                const gamepad_state: zglfw.Gamepad.State = gamepad.getState() catch .{};
+
+                for (std.enums.values(zglfw.Gamepad.Button)) |button| {
+                    if (gamepad_state.buttons[@intFromEnum(button)] == .press) {
+                        state.controller_type = State.ControllerType.gamepad;
+                        return;
+                    }
+                }
+
+                for (std.enums.values(zglfw.Gamepad.Axis)) |axis| {
+                    if (axis == .left_x or axis == .left_y or axis == .right_x or axis == .right_y) {
+                        if (@abs(gamepad_state.axes[@intFromEnum(axis)]) >= state.joystick_deadzone) {
+                            state.controller_type = State.ControllerType.gamepad;
+                            return;
+                        }
+                    } else if (axis == .left_trigger or axis == .right_trigger) {
+                        if (gamepad_state.axes[@intFromEnum(axis)] > -1.0) {
+                            state.controller_type = State.ControllerType.gamepad;
+                            return;
+                        }
+                    }
+                }
+            } else {
+                if (state.debug_state.enabled) {
+                    std.debug.print("Mapped gamepad: Missing mapping. Is GUID found in gamecontrollerdb.txt?\n", .{});
+                }
+            }
+        } else {
+            if (state.registered_joystick != null and state.registered_joystick_id == jid) {
+                state.registered_joystick = null;
+                state.registered_joystick_id = null;
+                state.controller_type = State.ControllerType.keyboard;
+
+                allocator.free(state.debug_state.registered_gamepad_guid);
+                state.debug_state.registered_gamepad_guid = "";
+                allocator.free(state.debug_state.registered_gamepad_name);
+                state.debug_state.registered_gamepad_name = "";
+                if (state.debug_state.enabled) {
+                    std.debug.print("Joystick disconnected. Reverting to keyboard input.\n", .{});
+                }
+            }
+        }
+    }
+}
+
+fn handleTopLevelInputs(state: *State.State, window: *Window, input_debouncer: *std.AutoHashMap(KeyUnion, bool)) void {
+    if (state.controller_type == State.ControllerType.keyboard) {
+        const menu_toggle_key = zglfw.Key.escape;
+        if (window.getKey(menu_toggle_key) == .press and !input_debouncer.contains(KeyUnion{ .key = menu_toggle_key })) {
+            state.show_settings = !state.show_settings;
+            input_debouncer.put(KeyUnion{ .key = menu_toggle_key }, true) catch unreachable;
+        }
+        if (window.getKey(menu_toggle_key) == .release and input_debouncer.contains(KeyUnion{ .key = menu_toggle_key })) {
+            _ = input_debouncer.remove(KeyUnion{ .key = menu_toggle_key });
+        }
+    } else if (state.controller_type == State.ControllerType.gamepad) {
+        const menu_toggle_button = zglfw.Gamepad.Button.start;
+        const joystick = state.registered_joystick.?;
+        if (joystick.asGamepad()) |gamepad| {
+            const gamepad_state: zglfw.Gamepad.State = gamepad.getState() catch .{};
+
+            for (std.enums.values(zglfw.Gamepad.Button)) |button| {
+                const action = gamepad_state.buttons[@intFromEnum(button)];
+                if (action == .press and button == menu_toggle_button and !input_debouncer.contains(KeyUnion{ .gamepad_button = menu_toggle_button })) {
+                    state.show_settings = !state.show_settings;
+                    input_debouncer.put(KeyUnion{ .gamepad_button = menu_toggle_button }, true) catch unreachable;
+                }
+                if (action == .release and button == menu_toggle_button and input_debouncer.contains(KeyUnion{ .gamepad_button = menu_toggle_button })) {
+                    _ = input_debouncer.remove(KeyUnion{ .gamepad_button = menu_toggle_button });
+                }
+            }
+        }
+    }
 }
