@@ -55,6 +55,10 @@
             .url = "git+https://github.com/zig-gamedev/zaudio.git#e5b89fde58be72de359089e9b8f5c4d5126fb159",
             .hash = "zaudio-0.11.0-dev-_M-91uMxQQAWK02Oofoq8EFtqHwcSrJ-ISYEkcPJvViz",
         },
+        .ztracy = .{
+            .url = "git+https://github.com/zig-gamedev/ztracy.git#d95d2a193b9f97944a17026c9a42b5d0f9a88c94",
+            .hash = "ztracy-0.14.0-dev-zHJSqzUHGQAmhJybhlwtl1QKevUBw4M5YKZqPfWx2y99",
+        },
     },
     .paths = .{
         "build.zig",

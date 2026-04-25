@@ -3,6 +3,7 @@ const Window = @import("zglfw").Window;
 const zaudio = @import("zaudio"); // TODO: Currently only needed for error handling in main. Refactor to remove this dependency from main.
 const zglfw = @import("zglfw");
 const zm = @import("zmath");
+const ztracy = @import("ztracy");
 
 const content_dir = @import("build_options").content_dir;
 
@@ -14,9 +15,19 @@ const State = @import("state.zig");
 const ScreenEdge = enum { north, east, south, west };
 
 pub fn main() !void {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Main", 0x00_ff_00_00);
+    defer tracy_zone.End();
+
+    var gpa: std.mem.Allocator = undefined;
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    const gpa = gpa_state.allocator();
     defer _ = gpa_state.deinit();
+
+    if (ztracy.enabled) {
+        var debug_allocator = ztracy.TracyAllocator{ .child_allocator = gpa_state.allocator() };
+        gpa = debug_allocator.allocator();
+    } else {
+        gpa = gpa_state.allocator();
+    }
 
     // Change current working directory to where the executable is located.
     {
@@ -97,15 +108,28 @@ pub fn main() !void {
     var avg_perf_timer = try std.time.Timer.start();
 
     while (!window.shouldClose() and window.getKey(.escape) != .press) {
+        const tracy_game_tick_zone = ztracy.ZoneNC(@src(), "Game Tick", 0x00_ff_00_00);
+        defer tracy_game_tick_zone.End();
+
+        defer audio.cleanupFinishedSounds();
+        defer state.removeQueuedObjects();
+
         fps_timer.reset();
 
         if (state.debug_state.enabled) {
             update_perf_timer.reset();
         }
 
-        zglfw.pollEvents();
+        {
+            const tracy_input_zone = ztracy.ZoneNC(@src(), "Game Event Polling", 0x00_ff_00_00);
+            defer tracy_input_zone.End();
 
-        update(gpa, state, audio, window, graphics.gctx.stats.delta_time);
+            zglfw.pollEvents();
+        }
+
+        if (state.game_state == State.GameState.running) {
+            update(gpa, state, audio, window, graphics.gctx.stats.delta_time);
+        }
 
         if (state.debug_state.enabled) {
             state.debug_state.current_update_perf_in_ns += update_perf_timer.read();
@@ -143,9 +167,10 @@ pub fn main() !void {
 }
 
 fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.AudioState, window: *Window, delta_time: f32) void {
-    if (state.game_state != State.GameState.running) {
-        return;
-    }
+    const tracy_zone = ztracy.ZoneNC(@src(), "Game Update", 0x00_ff_00_00);
+    defer tracy_zone.End();
+
+    defer state.createQueuedObjects() catch unreachable;
 
     state.shot_timer += delta_time;
 
@@ -378,10 +403,6 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
             spawnAsteroid(allocator, state) catch unreachable;
         }
     }
-
-    audio.cleanupFinishedSounds();
-    state.removeQueuedObjects();
-    state.createQueuedObjects() catch unreachable;
 }
 
 fn normToVertexSpace(v: f32) f32 {

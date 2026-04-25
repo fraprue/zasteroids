@@ -12,3 +12,8 @@ Alternatively, you can play with a gamepad. Left Stick moves the ship and right 
 - Collisions are too broad, i.e. they happen before objects visibly touch
 - Turning off VSync doesn't seem to work on specific systems -> On Windows with NVidia GPU, turning off VSync via the Control Center seems to fix the issue. Doesn't reproduce on Steam Deck.
 - High FPS (>100) causes stuttering -> Limiting the frame rate to 60 FPS seems to results in a smooth experience
+
+# Profiling
+To profile the running executable, simply build it with `-Denable_ztracy=true`.
+Then start a [compatible Tracy client](https://github.com/wolfpld/tracy/releases/tag/v0.13.1), start the game and connect the Tracy client to the running game.
+You should then see a breakdown of function calls, CPU and RAM usage.

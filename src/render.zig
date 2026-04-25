@@ -3,6 +3,7 @@ const std = @import("std");
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const zgui = @import("zgui");
+const ztracy = @import("ztracy");
 
 const content_dir = @import("build_options").content_dir;
 
@@ -354,26 +355,49 @@ fn appendMesh(
 }
 
 pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *GraphicsState, audio: *Audio.AudioState) void {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Game Render", 0x00_00_00_ff);
+    defer tracy_zone.End();
+
     const gctx = graphics.gctx;
 
     const window_name = "My First Game";
     const window_width = gctx.swapchain_descriptor.width;
     const window_height = gctx.swapchain_descriptor.height;
 
-    const window_title: [:0]u8 = std.fmt.allocPrintSentinel(allocator, "{s}, Player: {s}, Res: {}×{}", .{
-        window_name,
-        state.player_name,
-        window_width,
-        window_height,
-    }, 0) catch unreachable;
-    defer allocator.free(window_title);
+    {
+        const tracy_window_zone = ztracy.ZoneNC(@src(), "Game Render Window Title", 0x00_00_00_ff);
+        defer tracy_window_zone.End();
 
-    zglfw.setWindowTitle(graphics.window, window_title);
+        const window_title: [:0]u8 = std.fmt.allocPrintSentinel(allocator, "{s}, Player: {s}, Res: {}×{}", .{
+            window_name,
+            state.player_name,
+            window_width,
+            window_height,
+        }, 0) catch unreachable;
+        defer allocator.free(window_title);
 
-    zgui.backend.newFrame(
-        window_width,
-        window_height,
-    );
+        zglfw.setWindowTitle(graphics.window, window_title);
+    }
+    {
+        const tracy_backend_zone = ztracy.ZoneNC(@src(), "Game Render GUI Backend", 0x00_00_00_ff);
+        defer tracy_backend_zone.End();
+
+        zgui.backend.newFrame(
+            window_width,
+            window_height,
+        );
+    }
+
+    renderGui(allocator, graphics, state, audio);
+
+    present(graphics, state);
+}
+
+fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *State.State, audio: *Audio.AudioState) void {
+    const tracy_gui_zone = ztracy.ZoneNC(@src(), "Game Render GUI", 0x00_00_00_ff);
+    defer tracy_gui_zone.End();
+
+    const gctx = graphics.gctx;
 
     // Set the settings menu position to custom values
     zgui.setNextWindowPos(.{ .x = 20.0, .y = 20.0, .cond = .once });
@@ -612,8 +636,8 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
     if (state.game_state == State.GameState.starting) {
         // Set the starting menu position to custom values
         zgui.setNextWindowPos(.{
-            .x = 0.5 * @as(f32, @floatFromInt(window_width)),
-            .y = 0.3 * @as(f32, @floatFromInt(window_height)),
+            .x = 0.5 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
+            .y = 0.3 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
             .cond = .once,
         });
         if (zgui.begin("Start Menu", .{ .flags = .{ .always_auto_resize = true } })) {
@@ -659,8 +683,8 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
 
     if (state.game_state == State.GameState.highscore) {
         zgui.setNextWindowPos(.{
-            .x = 0.5 * @as(f32, @floatFromInt(window_width)),
-            .y = 0.3 * @as(f32, @floatFromInt(window_height)),
+            .x = 0.5 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
+            .y = 0.3 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
             .cond = .once,
         });
 
@@ -697,8 +721,8 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
     if (state.game_state == State.GameState.gameover) {
         // Set the starting menu position to custom values
         zgui.setNextWindowPos(.{
-            .x = 0.5 * @as(f32, @floatFromInt(window_width)),
-            .y = 0.3 * @as(f32, @floatFromInt(window_height)),
+            .x = 0.5 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
+            .y = 0.3 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
             .cond = .once,
         });
         if (zgui.begin("Gameover Menu", .{ .flags = .{ .always_auto_resize = true } })) {
@@ -720,11 +744,20 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
         }
         zgui.end();
     }
+}
 
+fn present(graphics: *GraphicsState, state: *State.State) void {
+    const tracy_present_zone = ztracy.ZoneNC(@src(), "Game Render Present", 0x00_00_00_ff);
+    defer tracy_present_zone.End();
+
+    const gctx = graphics.gctx;
     const back_buffer_view = gctx.swapchain.getCurrentTextureView();
     defer back_buffer_view.release();
 
     const commands = commands: {
+        const tracy_command_zone = ztracy.ZoneNC(@src(), "Game Render Build Commands", 0x00_00_00_ff);
+        defer tracy_command_zone.End();
+
         const encoder = gctx.device.createCommandEncoder(null);
         defer encoder.release();
 
@@ -739,6 +772,9 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
         };
 
         object_pass: {
+            const tracy_object_zone = ztracy.ZoneNC(@src(), "Game Render Object Pass", 0x00_00_00_ff);
+            defer tracy_object_zone.End();
+
             if (state.game_state != State.GameState.running) {
                 break :object_pass;
             }
@@ -791,6 +827,8 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
         }
 
         { //GUI pass
+            const tracy_gui_zone = ztracy.ZoneNC(@src(), "Game Render GUI Commands", 0x00_00_00_ff);
+            defer tracy_gui_zone.End();
             const pass = encoder.beginRenderPass(render_pass_info);
             defer {
                 pass.end();
@@ -803,6 +841,9 @@ pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *Grap
         break :commands encoder.finish(null);
     };
     defer commands.release();
+
+    const tracy_final_present_zone = ztracy.ZoneNC(@src(), "Game Render Present Final", 0x00_00_00_ff);
+    defer tracy_final_present_zone.End();
 
     gctx.submit(&.{commands});
     _ = gctx.present();

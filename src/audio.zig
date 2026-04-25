@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const zaudio = @import("zaudio");
+const ztracy = @import("ztracy");
 
 const content_dir = @import("build_options").content_dir;
 
@@ -28,6 +29,9 @@ pub const AudioState = struct {
         _: ?*const anyopaque,
         frame_count: u32,
     ) callconv(.c) void {
+        const tracy_zone = ztracy.ZoneNC(@src(), "Audio Update", 0x00_00_ff_00);
+        defer tracy_zone.End();
+
         const audio = @as(*AudioState, @ptrCast(@alignCast(device.getUserData())));
 
         audio.engine.asNodeGraphMut().readPcmFrames(output.?, frame_count, null) catch {};
@@ -140,6 +144,9 @@ pub const AudioState = struct {
     }
 
     pub fn spawnSound(self: *AudioState, allocator: std.mem.Allocator, sound_idx: u8) !void {
+        const tracy_zone = ztracy.ZoneNC(@src(), "Spawn Sound", 0x00_00_ff_00);
+        defer tracy_zone.End();
+
         var sound: *zaudio.Sound = undefined;
         switch (sound_idx) {
             0...1 => {
