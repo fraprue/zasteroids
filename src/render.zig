@@ -499,6 +499,28 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
         zgui.end();
     }
 
+    if (state.game_state == State.GameState.running) {
+        // Set the score display position to custom values
+        zgui.setNextWindowPos(.{
+            .x = 20.0,
+            .y = 20.0,
+            .cond = .always,
+        });
+
+        if (zgui.begin("Score", .{
+            .flags = .{
+                .no_title_bar = true,
+                .no_background = true,
+                .no_mouse_inputs = true,
+                .no_nav_inputs = true,
+                .always_auto_resize = true,
+            },
+        })) {
+            zgui.text("Score: {d}", .{state.score});
+        }
+        zgui.end();
+    }
+
     if (state.game_state == State.GameState.gameover) {
         // Set the starting menu position to custom values
         zgui.setNextWindowPos(.{
@@ -541,10 +563,6 @@ fn renderSettingsMenu(allocator: std.mem.Allocator, graphics: *GraphicsState, st
         zgui.bulletText(
             "Average: {d:.3} ms/frame ({d:.1} fps)",
             .{ gctx.stats.average_cpu_time, gctx.stats.fps },
-        );
-        zgui.bulletText(
-            "Score: {d}",
-            .{state.score},
         );
 
         _ = zgui.checkbox("Debug", .{ .v = &state.debug_state.enabled });
