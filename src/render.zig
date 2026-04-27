@@ -27,8 +27,8 @@ const wgsl_shader =
 \\      var output: VertexOut;
 \\
 \\      var newVertex: vec2<f32>;
-\\      newVertex[0] = offsetRotationScale[3] * vertex[0] * cosV - offsetRotationScale[3] * vertex[1] * sinV + offsetRotationScale[0];
-\\      newVertex[1] = offsetRotationScale[3] * vertex[0] * sinV + offsetRotationScale[3] * vertex[1] * cosV + offsetRotationScale[1];
+\\      newVertex[0] = offsetRotationScale[3] * (vertex[0] * cosV - vertex[1] * sinV) + offsetRotationScale[0];
+\\      newVertex[1] = offsetRotationScale[3] * (vertex[0] * sinV + vertex[1] * cosV) + offsetRotationScale[1];
 \\      output.position_clip = vec4(newVertex, 0.0, 1.0);
 \\      output.color = color;
 \\      return output;
@@ -665,19 +665,21 @@ fn renderSettingsMenu(allocator: std.mem.Allocator, graphics: *GraphicsState, st
                     .min = 0.01,
                     .max = 1.0,
                 });
+
+                if (zgui.sliderFloat("Player Speed", .{
+                    .v = &state.config.player_speed,
+                    .min = 0.01,
+                    .max = 2.0,
+                })) {
+                    player_ptr.velocity = state.config.player_speed;
+                }
+
+                _ = zgui.sliderFloat("Player Turn Speed", .{
+                    .v = &state.config.player_turn_speed,
+                    .min = 0.5,
+                    .max = 4.0,
+                });
             }
-
-            _ = zgui.sliderFloat("Player Speed", .{
-                .v = &state.config.player_speed,
-                .min = 0.01,
-                .max = 2.0,
-            });
-
-            _ = zgui.sliderFloat("Player Turn Speed", .{
-                .v = &state.config.player_turn_speed,
-                .min = 0.5,
-                .max = 4.0,
-            });
 
             _ = zgui.sliderFloat("Shot Delay", .{
                 .v = &state.config.shot_delay,

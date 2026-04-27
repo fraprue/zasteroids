@@ -9,10 +9,29 @@ pub const ObjectType = []const u8;
 
 pub const ObjectState = struct {
     pos: zm.Vec,
+    velocity: f32,
     rot: f32,
     scale: f32,
     type: ObjectType,
     mesh_type: MeshType,
+
+    pub fn move(self: *ObjectState, direction: zm.Vec, delta_time: f32) void {
+        self.pos += zm.f32x4s(self.velocity) * direction * zm.f32x4s(delta_time);
+    }
+
+    pub fn getOrientation(self: *ObjectState) zm.Vec {
+        const forward = [_]f32{ 0.0, 1.0 };
+        const sincos = zm.sincos(self.rot);
+        var rotated_forward = zm.Vec{ 0.0, 0.0, 0.0, 0.0 };
+        rotated_forward[0] = forward[0] * sincos[1] - forward[1] * sincos[0];
+        rotated_forward[1] = forward[0] * sincos[0] + forward[1] * sincos[1];
+
+        return rotated_forward;
+    }
+
+    pub fn rotate(self: *ObjectState, delta_time: f32, turn_speed: f32) void {
+        self.rot += turn_speed * delta_time;
+    }
 };
 
 pub const FrameStatsData = std.DoublyLinkedList;
@@ -224,6 +243,7 @@ pub const State = struct {
         _ = self.createObject(
             ObjectState{
                 .pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 },
+                .velocity = self.config.player_speed,
                 .rot = 0.0,
                 .scale = 0.1,
                 .type = "player",
@@ -437,6 +457,7 @@ test "create object" {
 
     const object = ObjectState{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.5,
         .scale = 0.1,
         .type = "test_type",
@@ -473,6 +494,7 @@ test "create object queued" {
 
     try state.createObjectQueued(gpa, .{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.5,
         .scale = 0.1,
         .type = "test_type",
@@ -501,6 +523,7 @@ test "remove object" {
 
     const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.5,
         .scale = 0.1,
         .type = "test_type",
@@ -527,6 +550,7 @@ test "remove object queued" {
 
     const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.5,
         .scale = 0.1,
         .type = "test_type",
@@ -559,6 +583,7 @@ test "get all objects of type" {
 
     const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.5,
         .scale = 0.1,
         .type = "test_type_1",
@@ -566,6 +591,7 @@ test "get all objects of type" {
     });
     _ = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.5,
         .scale = 0.1,
         .type = "test_type_2",
@@ -599,6 +625,7 @@ test "get collision radius" {
 
     const object = ObjectState{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.5,
         .scale = 0.1,
         .type = "test_type_1",

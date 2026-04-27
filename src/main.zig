@@ -168,53 +168,36 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
 
     state.shot_timer += delta_time;
 
-    const delta_time_vec = zm.f32x4s(delta_time);
-    const forward = [_]f32{ 0.0, 1.0 };
-
     var player_id_list: std.ArrayList(State.ObjectId) = .empty;
     defer player_id_list.deinit(allocator);
     state.getAllObjectsOfType(allocator, "player", &player_id_list) catch unreachable;
     const player_id = player_id_list.getLast();
-    const player_ptr = state.getObjectPtr(player_id) catch unreachable;
 
     // Update Player
     {
-        const move_speed = zm.f32x4s(state.config.player_speed);
+        const player_ptr = state.getObjectPtr(player_id) catch unreachable;
         const turn_speed = state.config.player_turn_speed;
-        const right = turn_speed * delta_time;
-
-        const sincos = zm.sincos(player_ptr.rot);
-        var rotated_forward = zm.Vec{ 0.0, 0.0, 0.0, 0.0 };
-        rotated_forward[0] = forward[0] * sincos[1] - forward[1] * sincos[0];
-        rotated_forward[1] = forward[0] * sincos[0] + forward[1] * sincos[1];
-
-        // const forward_test = zm.Vec{ 0.0, 1.0, 0.0, 0.0 };
-        // const rotated_forward_test = zm.mul(zm.rotationZ(player.rot), forward_test);
-        // std.debug.print("Rotated Forward: x: {d}, y:{d}\n", .{ rotated_forward[0], rotated_forward[1] });
-        // std.debug.print("Rotated Forward Test: x: {d}, y:{d}\n", .{ rotated_forward_test[0], rotated_forward_test[1] });
-
-        rotated_forward = move_speed * delta_time_vec * rotated_forward;
 
         if (state.controller_type == State.ControllerType.keyboard) {
             if (window.getKey(.w) == .press) {
-                player_ptr.pos += rotated_forward;
+                player_ptr.move(player_ptr.getOrientation(), delta_time);
                 if (state.debug_state.enabled) {
                     std.debug.print("Forward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
                 }
             } else if (window.getKey(.s) == .press) {
-                player_ptr.pos -= rotated_forward;
+                player_ptr.move(-player_ptr.getOrientation(), delta_time);
                 if (state.debug_state.enabled) {
                     std.debug.print("Backward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
                 }
             }
 
             if (window.getKey(.d) == .press) {
-                player_ptr.rot -= right;
+                player_ptr.rotate(delta_time, -turn_speed);
                 if (state.debug_state.enabled) {
                     std.debug.print("Right: rot: {d}\n", .{player_ptr.rot / std.math.pi});
                 }
             } else if (window.getKey(.a) == .press) {
-                player_ptr.rot += right;
+                player_ptr.rotate(delta_time, turn_speed);
                 if (state.debug_state.enabled) {
                     std.debug.print("Left: rot: {d}\n", .{player_ptr.rot / std.math.pi});
                 }
@@ -232,7 +215,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
                 const gamepad_state: zglfw.Gamepad.State = gamepad.getState() catch .{};
 
                 var direction = zm.f32x4s(0.0);
-                var orientation = zm.f32x4s(0.0);
+                var target_orientation = zm.f32x4s(0.0);
                 for (std.enums.values(zglfw.Gamepad.Axis)) |axis| {
                     const axis_v = gamepad_state.axes[@intFromEnum(axis)];
                     if (axis == .left_x) {
@@ -242,47 +225,49 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
                         direction[1] = -axis_v;
                     }
                     if (axis == .right_x) {
-                        orientation[0] = axis_v;
+                        target_orientation[0] = axis_v;
                     }
                     if (axis == .right_y) {
-                        orientation[1] = -axis_v;
+                        target_orientation[1] = -axis_v;
                     }
                 }
 
                 if (zm.length2(direction)[0] >= state.joystick_deadzone) {
-                    player_ptr.pos += move_speed * delta_time_vec * direction;
+                    player_ptr.move(direction, delta_time);
                 }
-                if (zm.length2(orientation)[0] >= state.joystick_deadzone) {
+                if (zm.length2(target_orientation)[0] >= state.joystick_deadzone) {
+                    const player_orientation = player_ptr.getOrientation();
+
                     // Calculate 2D cross-product to determine direction of rotation
-                    const target_orientation = rotated_forward[0] * orientation[1] - rotated_forward[1] * orientation[0];
+                    const rotation_direction = player_orientation[0] * target_orientation[1] - player_orientation[1] * target_orientation[0];
 
                     const rotation_threshold = comptime 0.0001;
-                    if (@abs(target_orientation) > rotation_threshold) {
-                        player_ptr.rot += right * std.math.sign(target_orientation);
+                    if (@abs(rotation_direction) > rotation_threshold) {
+                        player_ptr.rotate(delta_time, turn_speed * std.math.sign(rotation_direction));
                     }
                 }
 
                 for (std.enums.values(zglfw.Gamepad.Button)) |button| {
                     const action = gamepad_state.buttons[@intFromEnum(button)];
                     if (action == .press and button == .dpad_up) {
-                        player_ptr.pos += rotated_forward;
+                        player_ptr.move(player_ptr.getOrientation(), delta_time);
                         if (state.debug_state.enabled) {
                             std.debug.print("Forward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
                         }
                     } else if (action == .press and button == .dpad_down) {
-                        player_ptr.pos -= rotated_forward;
+                        player_ptr.move(-player_ptr.getOrientation(), delta_time);
                         if (state.debug_state.enabled) {
                             std.debug.print("Backward: x: {d}, y:{d}\n", .{ player_ptr.pos[0], player_ptr.pos[1] });
                         }
                     }
 
                     if (action == .press and button == .dpad_right) {
-                        player_ptr.rot -= right;
+                        player_ptr.rotate(delta_time, -turn_speed);
                         if (state.debug_state.enabled) {
                             std.debug.print("Right: rot: {d}\n", .{player_ptr.rot / std.math.pi});
                         }
                     } else if (action == .press and button == .dpad_left) {
-                        player_ptr.rot += right;
+                        player_ptr.rotate(delta_time, turn_speed);
                         if (state.debug_state.enabled) {
                             std.debug.print("Left: rot: {d}\n", .{player_ptr.rot / std.math.pi});
                         }
@@ -309,21 +294,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
             }
             const object = object_entry.value_ptr;
 
-            const object_sincos = zm.sincos(object.rot);
-            var object_rotated_forward = zm.Vec{ 0.0, 0.0, 0.0, 0.0 };
-            object_rotated_forward[0] = forward[0] * object_sincos[1] - forward[1] * object_sincos[0];
-            object_rotated_forward[1] = forward[0] * object_sincos[0] + forward[1] * object_sincos[1];
-
-            var object_move_speed = zm.f32x4s(0.0);
-            if (std.mem.eql(u8, state.getObjectType(object_id) catch unreachable, "asteroid")) {
-                object_move_speed = zm.f32x4s(state.config.asteroid_speed);
-            } else if (std.mem.eql(u8, state.getObjectType(object_id) catch unreachable, "projectile")) {
-                object_move_speed = zm.f32x4s(state.config.shot_speed);
-            }
-
-            object_rotated_forward = object_move_speed * delta_time_vec * object_rotated_forward;
-
-            object.pos += object_rotated_forward;
+            object.move(object.getOrientation(), delta_time);
 
             if (std.mem.eql(u8, state.getObjectType(object_id) catch unreachable, "asteroid")) {
                 wrapPosCoordinates(&object.pos);
@@ -409,6 +380,7 @@ fn shoot(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.AudioS
             allocator,
             .{
                 .pos = player_ptr.pos,
+                .velocity = state.config.shot_speed,
                 .rot = player_ptr.rot,
                 .scale = 0.02,
                 .type = "projectile",
@@ -492,6 +464,7 @@ fn spawnAsteroid(allocator: std.mem.Allocator, state: *State.State) error{OutOfM
         allocator,
         .{
             .pos = pos,
+            .velocity = state.config.asteroid_speed,
             .rot = rot,
             .scale = rand_scale,
             .type = "asteroid",
@@ -514,6 +487,7 @@ fn splitAsteroid(allocator: std.mem.Allocator, state: *State.State, asteroid_id:
     const spread_angle = comptime std.math.degreesToRadians(20);
     const splitted_asteroid_1 = State.ObjectState{
         .pos = asteroid.pos,
+        .velocity = asteroid.velocity,
         .rot = asteroid.rot - spread_angle,
         .scale = @max(asteroid.scale * 0.5, state.config.asteroid_min_spawn_scale),
         .type = "asteroid",
@@ -572,6 +546,7 @@ test "object collision" {
 
     const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.0,
         .scale = 0.1,
         .type = "",
@@ -579,6 +554,7 @@ test "object collision" {
     });
     const o2_id = try state.createObject(.{
         .pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.0,
         .scale = 0.1,
         .type = "",
@@ -586,6 +562,7 @@ test "object collision" {
     });
     const o3_id = try state.createObject(.{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
         .rot = 0.0,
         .scale = 0.1,
         .type = "",
