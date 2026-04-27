@@ -241,7 +241,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
                     // Calculate 2D cross-product to determine direction of rotation
                     const rotation_direction = player_orientation[0] * target_orientation[1] - player_orientation[1] * target_orientation[0];
 
-                    const rotation_threshold = comptime 0.0001;
+                    const rotation_threshold = comptime 0.02;
                     if (@abs(rotation_direction) > rotation_threshold) {
                         player_ptr.rotate(delta_time, turn_speed * std.math.sign(rotation_direction));
                     }
@@ -460,11 +460,19 @@ fn spawnAsteroid(allocator: std.mem.Allocator, state: *State.State) error{OutOfM
     const max_scale_int = @as(u32, @intFromFloat(state.config.asteroid_max_spawn_scale * 1000));
     const rand_scale = @as(f32, @floatFromInt(state.rng.random().intRangeAtMost(u32, min_scale_int, max_scale_int))) / 1000.0;
 
+    const speed_modifier = zm.mapLinearV(
+        rand_scale,
+        state.config.asteroid_min_spawn_scale,
+        state.config.asteroid_max_spawn_scale,
+        1.25,
+        0.75,
+    );
+
     try state.createObjectQueued(
         allocator,
         .{
             .pos = pos,
-            .velocity = state.config.asteroid_speed,
+            .velocity = state.config.asteroid_speed * speed_modifier,
             .rot = rot,
             .scale = rand_scale,
             .type = "asteroid",
@@ -487,7 +495,7 @@ fn splitAsteroid(allocator: std.mem.Allocator, state: *State.State, asteroid_id:
     const spread_angle = comptime std.math.degreesToRadians(20);
     const splitted_asteroid_1 = State.ObjectState{
         .pos = asteroid.pos,
-        .velocity = asteroid.velocity,
+        .velocity = asteroid.velocity * 1.25,
         .rot = asteroid.rot - spread_angle,
         .scale = @max(asteroid.scale * 0.5, state.config.asteroid_min_spawn_scale),
         .type = "asteroid",
@@ -655,6 +663,9 @@ fn updateInputType(allocator: std.mem.Allocator, state: *State.State, window: *W
 }
 
 fn handleTopLevelInputs(state: *State.State, window: *Window, input_debouncer: *std.AutoHashMap(KeyUnion, bool)) void {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Handle Top Level Inputs", 0x00_ff_00_00);
+    defer tracy_zone.End();
+
     if (state.controller_type == State.ControllerType.keyboard) {
         const menu_toggle_key = zglfw.Key.escape;
         if (window.getKey(menu_toggle_key) == .press and !input_debouncer.contains(KeyUnion{ .key = menu_toggle_key })) {
