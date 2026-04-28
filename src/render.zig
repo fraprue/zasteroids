@@ -81,6 +81,7 @@ pub const GraphicsState = struct {
         zgui.plot.init();
         zgui.io.setConfigFlags(.{ .nav_enable_gamepad = true });
         zgui.io.setBackendFlags(.{ .has_gamepad = true });
+        zgui.io.setIniFilename(null);
 
         const window = try zglfw.Window.create(1400, 800, "", null, null);
         window.setSizeLimits(400, 400, -1, -1);
@@ -519,6 +520,27 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
             zgui.text("Score: {d}", .{state.score});
         }
         zgui.end();
+
+        const current_time = std.time.milliTimestamp();
+        var i: usize = 0;
+        while (i < state.render_scores.items.len) {
+            const render_score = state.render_scores.items[i];
+            const elapsed_time = current_time - render_score.timestamp;
+            if (elapsed_time >= 1000) {
+                _ = state.render_scores.swapRemove(i);
+            } else {
+                const new_pos = .{
+                    render_score.pos[0],
+                    render_score.pos[1] + (@as(f32, @floatFromInt(elapsed_time)) / 1000.0) * 0.2,
+                };
+                renderScoreFloatingText(allocator, render_score, vertexToScreenSpace(
+                    new_pos,
+                    @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
+                    @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
+                ));
+                i += 1;
+            }
+        }
     }
 
     if (state.game_state == State.GameState.gameover) {
@@ -913,6 +935,71 @@ fn present(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *State
     }
 }
 
+pub fn renderScoreFloatingText(allocator: std.mem.Allocator, render_score: State.RenderScoreEntry, pos: [2]f32) void {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Game Render Score Floating Text", 0x00_00_00_ff);
+    defer tracy_zone.End();
+
+    zgui.setNextWindowPos(.{
+        .x = pos[0],
+        .y = pos[1],
+        .cond = .none,
+    });
+
+    const window_name = std.fmt.allocPrintSentinel(allocator, "##score_{d}", .{render_score.timestamp}, 0) catch unreachable;
+    defer allocator.free(window_name);
+
+    if (zgui.begin(window_name, .{
+        .flags = .{
+            .no_title_bar = true,
+            .no_background = true,
+            .always_auto_resize = true,
+        },
+    })) {
+        zgui.text("{d}", .{render_score.score});
+    }
+    zgui.end();
+}
+
 fn playClickSound(allocator: std.mem.Allocator, audio: *Audio.AudioState) void {
     audio.spawnSound(allocator, 1) catch unreachable;
+}
+
+fn vertexToScreenSpace(pos: [2]f32, screen_width: f32, screen_height: f32) [2]f32 {
+    return .{
+        (pos[0] + 1.0) * 0.5 * screen_width,
+        (1.0 - (pos[1] + 1.0) * 0.5) * screen_height,
+    };
+}
+
+test "vertexToScreenSpace correct conversion" {
+    {
+        const input = [2]f32{ -1.0, 1.0 };
+        const expected = [2]f32{ 0.0, 0.0 };
+        const result = vertexToScreenSpace(input, 1.0, 1.0);
+        try std.testing.expectEqual(expected, result);
+    }
+    {
+        const input = [2]f32{ 1.0, -1.0 };
+        const expected = [2]f32{ 1.0, 1.0 };
+        const result = vertexToScreenSpace(input, 1.0, 1.0);
+        try std.testing.expectEqual(expected, result);
+    }
+    {
+        const input = [2]f32{ 0.0, 0.0 };
+        const expected = [2]f32{ 0.5, 0.5 };
+        const result = vertexToScreenSpace(input, 1.0, 1.0);
+        try std.testing.expectEqual(expected, result);
+    }
+    {
+        const input = [2]f32{ 1.0, -1.0 };
+        const expected = [2]f32{ 1920.0, 1080.0 };
+        const result = vertexToScreenSpace(input, 1920.0, 1080.0);
+        try std.testing.expectEqual(expected, result);
+    }
+    {
+        const input = [2]f32{ 0.0, 0.0 };
+        const expected = [2]f32{ 960.0, 540.0 };
+        const result = vertexToScreenSpace(input, 1920.0, 1080.0);
+        try std.testing.expectEqual(expected, result);
+    }
 }

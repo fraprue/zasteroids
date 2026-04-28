@@ -161,11 +161,13 @@ pub const AudioState = struct {
 
     pub fn cleanupFinishedSounds(self: *AudioState) void {
         var i: usize = 0;
-        while (i < self.spawned_sounds.items.len) : (i += 1) {
+        while (i < self.spawned_sounds.items.len) {
             const sound = self.spawned_sounds.items[i];
             if (!sound.isPlaying()) {
                 sound.destroy();
                 _ = self.spawned_sounds.swapRemove(i);
+            } else {
+                i += 1;
             }
         }
     }

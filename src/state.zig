@@ -102,6 +102,12 @@ fn highscoreSort(_: void, v1: HighscoreEntry, v2: HighscoreEntry) bool {
 
 pub const HighscoreList = std.ArrayList(HighscoreEntry);
 
+pub const RenderScoreEntry = struct {
+    score: u32,
+    pos: [2]f32,
+    timestamp: i64,
+};
+
 pub const ControllerType = enum { keyboard, gamepad };
 
 pub const GameState = enum { starting, running, gameover, highscore };
@@ -142,6 +148,7 @@ pub const State = struct {
 
     player_name: []u8,
     score: u32,
+    render_scores: std.ArrayList(RenderScoreEntry),
 
     highscore_cached: bool,
     highscore_cache: HighscoreList,
@@ -187,7 +194,7 @@ pub const State = struct {
 
             .player_name = "",
             .score = 0,
-
+            .render_scores = .empty,
             .highscore_cached = false,
             .highscore_cache = .empty,
 
@@ -219,6 +226,8 @@ pub const State = struct {
             const data_point: *FrameStatsDataPoint = @fieldParentPtr("node", node);
             allocator.destroy(data_point);
         }
+
+        self.render_scores.deinit(allocator);
         self.mesh_collision_data.deinit(allocator);
         self.queued_deletion_id_list.deinit(allocator);
         self.queued_create_object_list.deinit(allocator);
@@ -252,6 +261,7 @@ pub const State = struct {
         ) catch unreachable;
 
         self.score = 0;
+        self.render_scores = .empty;
 
         self.game_state = GameState.running;
     }
@@ -273,6 +283,9 @@ pub const State = struct {
 
         try self.storeHighscore(&highscore_list);
         self.clearCachedHighscoreData(allocator);
+
+        self.render_scores.deinit(allocator);
+        self.render_scores = .empty;
 
         self.game_state = GameState.gameover;
     }
@@ -452,7 +465,8 @@ test "create object" {
     const state = try gpa.create(State);
     defer gpa.destroy(state);
 
-    try state.init(gpa);
+    const config = Config{};
+    try state.init(gpa, config);
     defer state.deinit(gpa);
 
     const object = ObjectState{
@@ -489,7 +503,8 @@ test "create object queued" {
     const state = try gpa.create(State);
     defer gpa.destroy(state);
 
-    try state.init(gpa);
+    const config = Config{};
+    try state.init(gpa, config);
     defer state.deinit(gpa);
 
     try state.createObjectQueued(gpa, .{
@@ -518,7 +533,8 @@ test "remove object" {
     const state = try gpa.create(State);
     defer gpa.destroy(state);
 
-    try state.init(gpa);
+    const config = Config{};
+    try state.init(gpa, config);
     defer state.deinit(gpa);
 
     const o1_id = try state.createObject(.{
@@ -545,7 +561,8 @@ test "remove object queued" {
     const state = try gpa.create(State);
     defer gpa.destroy(state);
 
-    try state.init(gpa);
+    const config = Config{};
+    try state.init(gpa, config);
     defer state.deinit(gpa);
 
     const o1_id = try state.createObject(.{
@@ -578,7 +595,8 @@ test "get all objects of type" {
     const state = try gpa.create(State);
     defer gpa.destroy(state);
 
-    try state.init(gpa);
+    const config = Config{};
+    try state.init(gpa, config);
     defer state.deinit(gpa);
 
     const o1_id = try state.createObject(.{
@@ -616,7 +634,8 @@ test "get collision radius" {
     const state = try gpa.create(State);
     defer gpa.destroy(state);
 
-    try state.init(gpa);
+    const config = Config{};
+    try state.init(gpa, config);
     defer state.deinit(gpa);
 
     const mesh_collision_radius = 0.5;

@@ -342,7 +342,13 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
                         std.debug.print("Destroying asteroid of scale {d} scored {d} points.\n", .{ asteroid_ptr.scale, adapted_score });
                     }
 
-                    state.score += @as(u32, @intFromFloat(@floor(adapted_score)));
+                    const score = @as(u32, @intFromFloat(@floor(adapted_score)));
+                    state.score += score;
+                    state.render_scores.append(allocator, .{
+                        .score = score,
+                        .pos = .{ asteroid_ptr.pos[0], asteroid_ptr.pos[1] },
+                        .timestamp = std.time.milliTimestamp(),
+                    }) catch unreachable;
 
                     splitAsteroid(allocator, state, asteroid_id) catch unreachable;
                     state.removeObjectQueued(allocator, projectile_id) catch unreachable;
@@ -547,7 +553,8 @@ test "object collision" {
     const state = try gpa.create(State.State);
     defer gpa.destroy(state);
 
-    try state.init(gpa);
+    const config = State.Config{};
+    try state.init(gpa, config);
     defer state.deinit(gpa);
 
     try state.mesh_collision_data.append(gpa, 0.1);
