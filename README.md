@@ -4,9 +4,19 @@ A personal learning project for Zig and basic game development, based on the 197
 You are the colorful triangle in the middle of the screen. You can move with the WASD keys and shoot with Spacebar.
 Alternatively, you can play with a gamepad. Left Stick moves the ship and right stick rotates it. You can shoot using the right bumper.
 
-# Currently missing features
-- Configuration of key bindings
-- Local Multiplayer?
+# Features
+- [x] GPU-based rendering of game objects
+- [x] Basic UI
+- [x] Keyboard + Mouse support
+- [x] Gamepad support
+- [x] Basic Sound effects + music
+- [x] Scoring system, incl. persistent highscores
+- [x] Asteroids splitting up on being hit
+- [x] Extensive configuration options
+- [x] Persistent configuration
+- [x] CPU + Memory profiling tools
+- [ ] Configuration of key bindings
+- [ ] Local Multiplayer
 
 # Currently known issues
 - Collisions are too broad, i.e. they happen before objects visibly touch
