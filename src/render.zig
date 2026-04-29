@@ -526,12 +526,12 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
         while (i < state.render_scores.items.len) {
             const render_score = state.render_scores.items[i];
             const elapsed_time = current_time - render_score.timestamp;
-            if (elapsed_time >= 1000) {
+            if (elapsed_time >= 400) {
                 _ = state.render_scores.swapRemove(i);
             } else {
                 const new_pos = .{
                     render_score.pos[0],
-                    render_score.pos[1] + (@as(f32, @floatFromInt(elapsed_time)) / 1000.0) * 0.2,
+                    render_score.pos[1] + (@as(f32, @floatFromInt(elapsed_time)) / 400.0) * 0.1,
                 };
                 renderScoreFloatingText(allocator, render_score, vertexToScreenSpace(
                     new_pos,
@@ -955,7 +955,7 @@ pub fn renderScoreFloatingText(allocator: std.mem.Allocator, render_score: State
             .always_auto_resize = true,
         },
     })) {
-        zgui.text("{d}", .{render_score.score});
+        zgui.text("+{d}", .{render_score.score});
     }
     zgui.end();
 }
