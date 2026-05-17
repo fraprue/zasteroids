@@ -79,11 +79,13 @@ pub const AudioState = struct {
             .spawned_sounds = .empty,
         };
 
-        try self.sounds.append(allocator, try self.engine.createSoundFromFile(
+        self.sounds = try std.ArrayList(*zaudio.Sound).initCapacity(allocator, 2);
+
+        self.sounds.appendAssumeCapacity(try self.engine.createSoundFromFile(
             content_dir ++ "lasershot.wav",
             .{ .sgroup = self.sfx_group },
         ));
-        try self.sounds.append(allocator, try self.engine.createSoundFromFile(
+        self.sounds.appendAssumeCapacity(try self.engine.createSoundFromFile(
             content_dir ++ "blip.wav",
             .{ .sgroup = self.sfx_group },
         ));

@@ -65,8 +65,32 @@ pub fn main() !void {
     try graphics.init(gpa, config.render);
     defer graphics.deinit(gpa);
 
-    for (graphics.meshes.items) |mesh| {
-        try state.mesh_collision_data.append(gpa, mesh.collision_sphere_radius);
+    {
+        try state.object_collision_data.ensureTotalCapacityPrecise(gpa, 2);
+
+        var player_collision_polygon = try State.CollisionPolygon.initCapacity(gpa, 3);
+        player_collision_polygon.appendAssumeCapacity(.{ 0.0, 1.0 });
+        player_collision_polygon.appendAssumeCapacity(.{ -1.0, -1.0 });
+        player_collision_polygon.appendAssumeCapacity(.{ 1.0, -1.0 });
+
+        const player_collision_radius = State.calculateCollisionSphereRadius(&player_collision_polygon);
+        state.object_collision_data.appendAssumeCapacity(.{
+            .collision_polygon = player_collision_polygon,
+            .collision_sphere_radius = player_collision_radius,
+        });
+
+        var asteroid_collision_polygon = try State.CollisionPolygon.initCapacity(gpa, 5);
+        asteroid_collision_polygon.appendAssumeCapacity(.{ 0.0, 1.0 });
+        asteroid_collision_polygon.appendAssumeCapacity(.{ -0.7, 0.0 });
+        asteroid_collision_polygon.appendAssumeCapacity(.{ -0.3, -1.0 });
+        asteroid_collision_polygon.appendAssumeCapacity(.{ 0.3, -1.0 });
+        asteroid_collision_polygon.appendAssumeCapacity(.{ 0.7, 0.0 });
+
+        const asteroid_collision_radius = State.calculateCollisionSphereRadius(&asteroid_collision_polygon);
+        state.object_collision_data.appendAssumeCapacity(.{
+            .collision_polygon = asteroid_collision_polygon,
+            .collision_sphere_radius = asteroid_collision_radius,
+        });
     }
 
     {
@@ -308,54 +332,7 @@ fn update(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.Audio
         }
     }
 
-    // Check object collisions
-    {
-        var projectile_id_list: std.ArrayList(State.ObjectId) = .empty;
-        defer projectile_id_list.deinit(allocator);
-        state.getAllObjectsOfType(allocator, "projectile", &projectile_id_list) catch unreachable;
-
-        var asteroid_id_list: std.ArrayList(State.ObjectId) = .empty;
-        defer asteroid_id_list.deinit(allocator);
-        state.getAllObjectsOfType(allocator, "asteroid", &asteroid_id_list) catch unreachable;
-
-        for (asteroid_id_list.items) |asteroid_id| {
-            if (collides(state, player_id, asteroid_id) catch unreachable) {
-                state.gameOver(allocator) catch unreachable;
-                return;
-            }
-            for (projectile_id_list.items) |projectile_id| {
-                if (collides(state, projectile_id, asteroid_id) catch unreachable) {
-                    if (state.debug_state.enabled) {
-                        std.debug.print("Detected collision between projectile {d} and asteroid {d}\n", .{ projectile_id, asteroid_id });
-                    }
-                    const asteroid_ptr = state.getObjectPtr(asteroid_id) catch unreachable;
-
-                    const min_score_mult = 0.1;
-                    const adapted_score = zm.mapLinearV(
-                        asteroid_ptr.scale,
-                        state.config.asteroid_max_spawn_scale,
-                        state.config.asteroid_min_spawn_scale,
-                        state.config.asteroid_base_score * min_score_mult,
-                        state.config.asteroid_base_score,
-                    );
-                    if (state.debug_state.enabled) {
-                        std.debug.print("Destroying asteroid of scale {d} scored {d} points.\n", .{ asteroid_ptr.scale, adapted_score });
-                    }
-
-                    const score = @as(u32, @intFromFloat(@floor(adapted_score)));
-                    state.score += score;
-                    state.render_scores.append(allocator, .{
-                        .score = score,
-                        .pos = .{ asteroid_ptr.pos[0], asteroid_ptr.pos[1] },
-                        .timestamp = std.time.milliTimestamp(),
-                    }) catch unreachable;
-
-                    splitAsteroid(allocator, state, asteroid_id) catch unreachable;
-                    state.removeObjectQueued(allocator, projectile_id) catch unreachable;
-                }
-            }
-        }
-    }
+    checkCollisions(allocator, state, player_id);
 
     // Spawn asteroids in fixed time intervals
     {
@@ -531,21 +508,90 @@ fn splitAsteroid(allocator: std.mem.Allocator, state: *State.State, asteroid_id:
     }
 }
 
-fn collides(state: *State.State, o1_id: State.ObjectId, o2_id: State.ObjectId) error{objectNotFound}!bool {
-    const o1 = try state.getObjectPtr(o1_id);
-    const o2 = try state.getObjectPtr(o2_id);
+fn checkCollisions(allocator: std.mem.Allocator, state: *State.State, player_id: State.ObjectId) void {
+    var projectile_id_list: std.ArrayList(State.ObjectId) = .empty;
+    defer projectile_id_list.deinit(allocator);
+    state.getAllObjectsOfType(allocator, "projectile", &projectile_id_list) catch unreachable;
+
+    var asteroid_id_list: std.ArrayList(State.ObjectId) = .empty;
+    defer asteroid_id_list.deinit(allocator);
+    state.getAllObjectsOfType(allocator, "asteroid", &asteroid_id_list) catch unreachable;
+
+    for (asteroid_id_list.items) |asteroid_id| {
+        if (collides(allocator, state, player_id, asteroid_id)) {
+            state.gameOver(allocator) catch unreachable;
+            return;
+        }
+        for (projectile_id_list.items) |projectile_id| {
+            if (collides(allocator, state, projectile_id, asteroid_id)) {
+                if (state.debug_state.enabled) {
+                    std.debug.print("Detected collision between projectile {d} and asteroid {d}\n", .{ projectile_id, asteroid_id });
+                }
+                const asteroid_ptr = state.getObjectPtr(asteroid_id) catch unreachable;
+
+                const min_score_mult = 0.1;
+                const adapted_score = zm.mapLinearV(
+                    asteroid_ptr.scale,
+                    state.config.asteroid_max_spawn_scale,
+                    state.config.asteroid_min_spawn_scale,
+                    state.config.asteroid_base_score * min_score_mult,
+                    state.config.asteroid_base_score,
+                );
+                if (state.debug_state.enabled) {
+                    std.debug.print("Destroying asteroid of scale {d} scored {d} points.\n", .{ asteroid_ptr.scale, adapted_score });
+                }
+
+                const score = @as(u32, @intFromFloat(@floor(adapted_score)));
+                state.score += score;
+                state.render_scores.append(allocator, .{
+                    .score = score,
+                    .pos = .{ asteroid_ptr.pos[0], asteroid_ptr.pos[1] },
+                    .timestamp = std.time.milliTimestamp(),
+                }) catch unreachable;
+
+                splitAsteroid(allocator, state, asteroid_id) catch unreachable;
+                state.removeObjectQueued(allocator, projectile_id) catch unreachable;
+            }
+        }
+    }
+}
+
+fn collides(allocator: std.mem.Allocator, state: *State.State, o1_id: State.ObjectId, o2_id: State.ObjectId) bool {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Collision Check", 0x00_ff_00_00);
+    defer tracy_zone.End();
+
+    const o1 = state.getObjectPtr(o1_id) catch {
+        std.debug.print("Collision check failed: Object with id {d} not found\n", .{o1_id});
+        return false;
+    };
+    const o2 = state.getObjectPtr(o2_id) catch {
+        std.debug.print("Collision check failed: Object with id {d} not found\n", .{o2_id});
+        return false;
+    };
+
+    if (broadCollisionCheck(state, o1, o2)) {
+        return narrowCollisionCheck(allocator, state, o1, o2);
+    }
+
+    return false;
+}
+
+fn broadCollisionCheck(state: *State.State, o1: *State.ObjectState, o2: *State.ObjectState) bool {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Broad Collision Check", 0x00_ff_00_00);
+    defer tracy_zone.End();
 
     const x_dist = o2.pos[0] - o1.pos[0];
     const y_dist = o2.pos[1] - o1.pos[1];
+    // TODO: Avoid usage of sqrt
     const distance = std.math.sqrt(x_dist * x_dist + y_dist * y_dist);
 
-    const o1_collision_radius = try state.getObjectCollisionRadius(o1_id);
-    const o2_collision_radius = try state.getObjectCollisionRadius(o2_id);
+    const o1_collision_radius = state.getObjectCollisionRadius(o1);
+    const o2_collision_radius = state.getObjectCollisionRadius(o2);
 
     return distance <= (o1_collision_radius + o2_collision_radius);
 }
 
-test "object collision" {
+test "object broad collision" {
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
     const gpa = gpa_state.allocator();
     defer std.testing.expect(gpa_state.deinit() == std.heap.Check.ok) catch unreachable;
@@ -557,7 +603,7 @@ test "object collision" {
     try state.init(gpa, config);
     defer state.deinit(gpa);
 
-    try state.mesh_collision_data.append(gpa, 0.1);
+    try state.object_collision_data.append(gpa, .{ .collision_sphere_radius = 0.1, .collision_polygon = .empty });
 
     const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 },
@@ -584,8 +630,146 @@ test "object collision" {
         .mesh_type = Render.MeshType.triangle,
     });
 
-    try std.testing.expect(try collides(state, o1_id, o2_id));
-    try std.testing.expect(!try collides(state, o1_id, o3_id));
+    const o1 = state.getObjectPtr(o1_id) catch unreachable;
+    const o2 = state.getObjectPtr(o2_id) catch unreachable;
+    const o3 = state.getObjectPtr(o3_id) catch unreachable;
+
+    try std.testing.expect(broadCollisionCheck(state, o1, o2));
+    try std.testing.expect(!broadCollisionCheck(state, o1, o3));
+}
+
+fn narrowCollisionCheck(allocator: std.mem.Allocator, state: *State.State, o1: *State.ObjectState, o2: *State.ObjectState) bool {
+    // Check collision of two polygons using the Separating Axes Theorem
+    const tracy_zone = ztracy.ZoneNC(@src(), "Narrow Collision Check", 0x00_ff_00_00);
+    defer tracy_zone.End();
+
+    const o1_polygon_count = state.object_collision_data.items[@intFromEnum(o1.mesh_type)].collision_polygon.items.len;
+    const o2_polygon_count = state.object_collision_data.items[@intFromEnum(o2.mesh_type)].collision_polygon.items.len;
+
+    var o1_collision_polygon = State.CollisionPolygon.initCapacity(allocator, o1_polygon_count) catch unreachable;
+    defer o1_collision_polygon.deinit(allocator);
+    state.getObjectCollisionPolygon(o1, &o1_collision_polygon);
+
+    var o2_collision_polygon = State.CollisionPolygon.initCapacity(allocator, o2_polygon_count) catch unreachable;
+    defer o2_collision_polygon.deinit(allocator);
+    state.getObjectCollisionPolygon(o2, &o2_collision_polygon);
+
+    for (o1_collision_polygon.items, 0..) |_, i| {
+        const axis = getPerpendicularAxis(&o1_collision_polygon, i);
+        const projection_o1 = projectVertsOnAxis(axis, &o1_collision_polygon);
+        const projection_o2 = projectVertsOnAxis(axis, &o2_collision_polygon);
+
+        if ((projection_o1.min - projection_o2.max > 0) or (projection_o2.min - projection_o1.max > 0)) {
+            return false;
+        }
+    }
+    for (o2_collision_polygon.items, 0..) |_, i| {
+        const axis = getPerpendicularAxis(&o2_collision_polygon, i);
+        const projection_o1 = projectVertsOnAxis(axis, &o2_collision_polygon);
+        const projection_o2 = projectVertsOnAxis(axis, &o1_collision_polygon);
+
+        if ((projection_o2.min - projection_o1.max > 0) or (projection_o1.min - projection_o2.max > 0)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+test "object narrow collision" {
+    var gpa_state: std.heap.DebugAllocator(.{}) = .init;
+    const gpa = gpa_state.allocator();
+    defer std.testing.expect(gpa_state.deinit() == std.heap.Check.ok) catch unreachable;
+
+    const state = try gpa.create(State.State);
+    defer gpa.destroy(state);
+
+    const config = State.Config{};
+    try state.init(gpa, config);
+    defer state.deinit(gpa);
+
+    var triangle_collision_polygon = try State.CollisionPolygon.initCapacity(gpa, 3);
+    triangle_collision_polygon.appendAssumeCapacity(.{ 0.0, 1.0 });
+    triangle_collision_polygon.appendAssumeCapacity(.{ -1.0, -1.0 });
+    triangle_collision_polygon.appendAssumeCapacity(.{ 1.0, -1.0 });
+
+    const triangle_collision_radius = State.calculateCollisionSphereRadius(&triangle_collision_polygon);
+
+    try state.object_collision_data.append(gpa, .{
+        .collision_sphere_radius = triangle_collision_radius,
+        .collision_polygon = triangle_collision_polygon,
+    });
+
+    const o1_id = try state.createObject(.{
+        .pos = zm.Vec{ 0.1, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
+        .rot = std.math.pi / 2.0,
+        .scale = 0.1,
+        .type = "",
+        .mesh_type = Render.MeshType.triangle,
+    });
+    const o2_id = try state.createObject(.{
+        .pos = zm.Vec{ -0.11, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
+        .rot = -std.math.pi / 2.0,
+        .scale = 0.1,
+        .type = "",
+        .mesh_type = Render.MeshType.triangle,
+    });
+    const o3_id = try state.createObject(.{
+        .pos = zm.Vec{ -0.09, 0.0, 0.0, 0.0 },
+        .velocity = 0.0,
+        .rot = -std.math.pi / 2.0,
+        .scale = 0.1,
+        .type = "",
+        .mesh_type = Render.MeshType.triangle,
+    });
+
+    const o1 = state.getObjectPtr(o1_id) catch unreachable;
+    const o2 = state.getObjectPtr(o2_id) catch unreachable;
+    const o3 = state.getObjectPtr(o3_id) catch unreachable;
+
+    try std.testing.expect(!narrowCollisionCheck(gpa, state, o1, o2));
+    try std.testing.expect(narrowCollisionCheck(gpa, state, o1, o3));
+}
+
+fn getPerpendicularAxis(collision_polygon: *State.CollisionPolygon, vert_index: usize) [2]f32 {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Get Perpendicular Axis", 0x00_ff_00_00);
+    defer tracy_zone.End();
+
+    const v1 = collision_polygon.items[vert_index];
+
+    var next_vert_index = vert_index + 1;
+    if (next_vert_index >= collision_polygon.items.len) {
+        next_vert_index = 0;
+    }
+    const v2 = collision_polygon.items[next_vert_index];
+
+    return .{ -(v2[1] - v1[1]), v2[0] - v1[0] };
+}
+
+fn projectVertsOnAxis(axis: [2]f32, collision_polygon: *State.CollisionPolygon) struct { min: f32, max: f32 } {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Project Verts on Axis", 0x00_ff_00_00);
+    defer tracy_zone.End();
+
+    var min: f32 = std.math.inf(f32);
+    var max: f32 = 0.0;
+
+    for (collision_polygon.items) |vertex| {
+        const projected_distance = vectorDotProduct(axis, vertex);
+        if (projected_distance < min) {
+            min = projected_distance;
+        }
+        if (projected_distance > max) {
+            max = projected_distance;
+        }
+    }
+
+    return .{ .min = min, .max = max };
+}
+
+fn vectorDotProduct(v1: State.Vertex, v2: State.Vertex) f32 {
+    return v1[0] * v2[0] + v1[1] * v2[1];
 }
 
 fn updateInputType(allocator: std.mem.Allocator, state: *State.State, window: *Window) void {

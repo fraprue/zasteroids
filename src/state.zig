@@ -2,6 +2,7 @@ const std = @import("std");
 
 const zglfw = @import("zglfw");
 const zm = @import("zmath");
+const ztracy = @import("ztracy");
 
 const MeshType = @import("render.zig").MeshType;
 
@@ -89,6 +90,13 @@ pub const FrameStatsLine = struct {
 pub const ObjectId = u32;
 pub const ObjectMap = std.AutoHashMap(ObjectId, ObjectState);
 
+pub const Vertex = [2]f32;
+pub const CollisionPolygon = std.ArrayList(Vertex);
+pub const ObjectCollision = struct {
+    collision_sphere_radius: f32,
+    collision_polygon: CollisionPolygon,
+};
+
 var next_free_object_id: ObjectId = 0;
 
 pub const HighscoreEntry = struct {
@@ -164,7 +172,7 @@ pub const State = struct {
 
     rng: std.Random.DefaultPrng,
 
-    mesh_collision_data: std.ArrayList(f32),
+    object_collision_data: std.ArrayList(ObjectCollision),
 
     frame_time_history: FrameStatsData,
     shot_timer: f32,
@@ -209,7 +217,7 @@ pub const State = struct {
 
             .rng = prng,
 
-            .mesh_collision_data = .empty,
+            .object_collision_data = .empty,
 
             .frame_time_history = .{},
             .shot_timer = 0.0,
@@ -228,7 +236,10 @@ pub const State = struct {
         }
 
         self.render_scores.deinit(allocator);
-        self.mesh_collision_data.deinit(allocator);
+        for (self.object_collision_data.items) |*collision| {
+            collision.collision_polygon.deinit(allocator);
+        }
+        self.object_collision_data.deinit(allocator);
         self.queued_deletion_id_list.deinit(allocator);
         self.queued_create_object_list.deinit(allocator);
 
@@ -451,11 +462,55 @@ pub const State = struct {
         }
     }
 
-    pub fn getObjectCollisionRadius(self: *State, object_id: ObjectId) error{objectNotFound}!f32 {
-        const object = try self.getObjectPtr(object_id);
-        return self.mesh_collision_data.items[@intFromEnum(object.mesh_type)] * object.scale;
+    pub fn getObjectCollisionRadius(self: *State, object: *ObjectState) f32 {
+        return self.object_collision_data.items[@intFromEnum(object.mesh_type)].collision_sphere_radius * object.scale;
+    }
+
+    pub fn getObjectCollisionPolygon(self: *State, object: *ObjectState, collision_polygon: *CollisionPolygon) void {
+        const tracy_zone = ztracy.ZoneNC(@src(), "Get Object Collision Polygon", 0x00_00_ff_00);
+        defer tracy_zone.End();
+
+        polygonLocalToWorld(
+            &self.object_collision_data.items[@intFromEnum(object.mesh_type)].collision_polygon,
+            collision_polygon,
+            object.pos,
+            object.rot,
+            object.scale,
+        );
     }
 };
+
+pub fn calculateCollisionSphereRadius(collision_polygon: *CollisionPolygon) f32 {
+    // Approximate radius of collision sphere, based on vertex data.
+    // Assume that mesh is centered around (0,0).
+    // TODO: Utilize SIMD and avoid usage of sqrt
+    var collision_sphere_radius: f32 = 0.0;
+    for (collision_polygon.items) |vertex| {
+        const vertex_distance = std.math.sqrt(vertex[0] * vertex[0] + vertex[1] * vertex[1]);
+        if (vertex_distance > collision_sphere_radius) {
+            collision_sphere_radius = vertex_distance;
+        }
+    }
+    return collision_sphere_radius;
+}
+
+fn vertexLocalToWorld(v: Vertex, pos: zm.Vec, rot: f32, scale: f32) Vertex {
+    const sincos = zm.sincos(rot);
+    const x = v[0] * sincos[1] - v[1] * sincos[0];
+    const y = v[0] * sincos[0] + v[1] * sincos[1];
+    return .{ x * scale + pos[0], y * scale + pos[1] };
+}
+
+pub fn polygonLocalToWorld(local_polygon: *CollisionPolygon, world_polygon: *CollisionPolygon, pos: zm.Vec, rot: f32, scale: f32) void {
+    for (local_polygon.items) |vertex| {
+        world_polygon.appendAssumeCapacity(vertexLocalToWorld(
+            vertex,
+            pos,
+            rot,
+            scale,
+        ));
+    }
+}
 
 test "create object" {
     var gpa_state: std.heap.DebugAllocator(.{}) = .init;
@@ -640,7 +695,10 @@ test "get collision radius" {
 
     const mesh_collision_radius = 0.5;
 
-    try state.mesh_collision_data.append(gpa, mesh_collision_radius);
+    try state.object_collision_data.append(gpa, .{
+        .collision_sphere_radius = mesh_collision_radius,
+        .collision_polygon = .empty,
+    });
 
     const object = ObjectState{
         .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
@@ -652,5 +710,5 @@ test "get collision radius" {
     };
     const o1_id = try state.createObject(object);
 
-    try std.testing.expect(try state.getObjectCollisionRadius(o1_id) == mesh_collision_radius * object.scale);
+    try std.testing.expect(state.getObjectCollisionRadius(try state.getObjectPtr(o1_id)) == mesh_collision_radius * object.scale);
 }

@@ -53,7 +53,6 @@ pub const Mesh = struct {
     vertex_offset: i32,
     num_indices: u32,
     num_vertices: u32,
-    collision_sphere_radius: f32,
 };
 
 const ShaderInputType = [4]f32; //posX, posY, rotation, scale
@@ -144,17 +143,14 @@ pub const GraphicsState = struct {
             },
         });
 
-        var meshes: std.ArrayList(Mesh) = .empty;
         var meshes_indices: std.ArrayList(u32) = .empty;
         defer meshes_indices.deinit(allocator);
         var meshes_vertices: std.ArrayList(Vertex) = .empty;
         defer meshes_vertices.deinit(allocator);
-        initMeshes(allocator, &meshes, &meshes_indices, &meshes_vertices);
+        const meshes = initMeshes(allocator, &meshes_indices, &meshes_vertices);
 
         const total_num_vertices = @as(u32, @intCast(meshes_vertices.items.len));
         const total_num_indices = @as(u32, @intCast(meshes_indices.items.len));
-        // std.debug.print("Num vertices: {d}, Num indices: {d}\n", .{ total_num_vertices, total_num_indices });
-        // std.debug.print("Vertex buffer size: {d}\n", .{total_num_vertices * @sizeOf(Vertex)});
 
         const vertex_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .vertex = true },
@@ -300,10 +296,11 @@ pub const GraphicsState = struct {
 
 fn initMeshes(
     allocator: std.mem.Allocator,
-    meshes: *std.ArrayList(Mesh),
     meshes_indices: *std.ArrayList(u32),
     meshes_vertices: *std.ArrayList(Vertex),
-) void {
+) std.ArrayList(Mesh) {
+    var meshes = std.ArrayList(Mesh).initCapacity(allocator, 2) catch unreachable;
+
     // Basic Triangle
     {
         const vertex_data = [_]Vertex{
@@ -318,7 +315,7 @@ fn initMeshes(
             allocator,
             &vertex_data,
             &index_data,
-            meshes,
+            &meshes,
             meshes_indices,
             meshes_vertices,
         );
@@ -340,11 +337,13 @@ fn initMeshes(
             allocator,
             &vertex_data,
             &index_data,
-            meshes,
+            &meshes,
             meshes_indices,
             meshes_vertices,
         );
     }
+
+    return meshes;
 }
 
 fn appendMesh(
@@ -355,24 +354,12 @@ fn appendMesh(
     meshes_indices: *std.ArrayList(u32),
     meshes_vertices: *std.ArrayList(Vertex),
 ) void {
-    // Approximate radius of collision sphere, based on vertex data.
-    // Assume that mesh is centered around (0,0).
-    // TODO: Utilize SIMD and avoid usage of sqrt
-    var collision_sphere_radius: f32 = 0.0;
-    for (vertex_data) |vertex| {
-        const vertex_distance = std.math.sqrt(vertex.position[0] * vertex.position[0] + vertex.position[1] * vertex.position[1]);
-        if (vertex_distance > collision_sphere_radius) {
-            collision_sphere_radius = vertex_distance;
-        }
-    }
-
-    meshes.append(allocator, .{
+    meshes.appendAssumeCapacity(.{
         .index_offset = @as(u32, @intCast(meshes_indices.items.len)),
         .vertex_offset = @as(i32, @intCast(meshes_vertices.items.len)),
         .num_indices = @as(u32, @intCast(index_data.len)),
         .num_vertices = @as(u32, @intCast(vertex_data.len)),
-        .collision_sphere_radius = collision_sphere_radius,
-    }) catch unreachable;
+    });
 
     meshes_indices.appendSlice(allocator, index_data) catch unreachable;
     meshes_vertices.appendSlice(allocator, vertex_data) catch unreachable;
