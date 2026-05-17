@@ -518,12 +518,12 @@ fn checkCollisions(allocator: std.mem.Allocator, state: *State.State, player_id:
     state.getAllObjectsOfType(allocator, "asteroid", &asteroid_id_list) catch unreachable;
 
     for (asteroid_id_list.items) |asteroid_id| {
-        if (collides(allocator, state, player_id, asteroid_id)) {
+        if (collides(state, player_id, asteroid_id)) {
             state.gameOver(allocator) catch unreachable;
             return;
         }
         for (projectile_id_list.items) |projectile_id| {
-            if (collides(allocator, state, projectile_id, asteroid_id)) {
+            if (collides(state, projectile_id, asteroid_id)) {
                 if (state.debug_state.enabled) {
                     std.debug.print("Detected collision between projectile {d} and asteroid {d}\n", .{ projectile_id, asteroid_id });
                 }
@@ -556,7 +556,7 @@ fn checkCollisions(allocator: std.mem.Allocator, state: *State.State, player_id:
     }
 }
 
-fn collides(allocator: std.mem.Allocator, state: *State.State, o1_id: State.ObjectId, o2_id: State.ObjectId) bool {
+fn collides(state: *State.State, o1_id: State.ObjectId, o2_id: State.ObjectId) bool {
     const tracy_zone = ztracy.ZoneNC(@src(), "Collision Check", 0x00_ff_00_00);
     defer tracy_zone.End();
 
@@ -570,7 +570,7 @@ fn collides(allocator: std.mem.Allocator, state: *State.State, o1_id: State.Obje
     };
 
     if (broadCollisionCheck(state, o1, o2)) {
-        return narrowCollisionCheck(allocator, state, o1, o2);
+        return narrowCollisionCheck(state, o1, o2);
     }
 
     return false;
@@ -638,24 +638,28 @@ test "object broad collision" {
     try std.testing.expect(!broadCollisionCheck(state, o1, o3));
 }
 
-fn narrowCollisionCheck(allocator: std.mem.Allocator, state: *State.State, o1: *State.ObjectState, o2: *State.ObjectState) bool {
+fn narrowCollisionCheck(state: *State.State, o1: *State.ObjectState, o2: *State.ObjectState) bool {
     // Check collision of two polygons using the Separating Axes Theorem
     const tracy_zone = ztracy.ZoneNC(@src(), "Narrow Collision Check", 0x00_ff_00_00);
     defer tracy_zone.End();
 
-    const o1_polygon_count = state.object_collision_data.items[@intFromEnum(o1.mesh_type)].collision_polygon.items.len;
-    const o2_polygon_count = state.object_collision_data.items[@intFromEnum(o2.mesh_type)].collision_polygon.items.len;
+    const o1_vertex_count = state.object_collision_data.items[@intFromEnum(o1.mesh_type)].collision_polygon.items.len;
+    const o2_vertex_count = state.object_collision_data.items[@intFromEnum(o2.mesh_type)].collision_polygon.items.len;
 
-    var o1_collision_polygon = State.CollisionPolygon.initCapacity(allocator, o1_polygon_count) catch unreachable;
+    var buffer: [1000]u8 = undefined;
+    var fba: std.heap.FixedBufferAllocator = .init(&buffer);
+    const allocator = fba.allocator();
+
+    var o1_collision_polygon = State.CollisionPolygon.initCapacity(allocator, o1_vertex_count) catch unreachable;
     defer o1_collision_polygon.deinit(allocator);
     state.getObjectCollisionPolygon(o1, &o1_collision_polygon);
 
-    var o2_collision_polygon = State.CollisionPolygon.initCapacity(allocator, o2_polygon_count) catch unreachable;
+    var o2_collision_polygon = State.CollisionPolygon.initCapacity(allocator, o2_vertex_count) catch unreachable;
     defer o2_collision_polygon.deinit(allocator);
     state.getObjectCollisionPolygon(o2, &o2_collision_polygon);
 
     for (o1_collision_polygon.items, 0..) |_, i| {
-        const axis = getPerpendicularAxis(&o1_collision_polygon, i);
+        const axis = getEdgeNormal(getPolygonEdge(&o1_collision_polygon, i));
         const projection_o1 = projectVertsOnAxis(axis, &o1_collision_polygon);
         const projection_o2 = projectVertsOnAxis(axis, &o2_collision_polygon);
 
@@ -664,7 +668,7 @@ fn narrowCollisionCheck(allocator: std.mem.Allocator, state: *State.State, o1: *
         }
     }
     for (o2_collision_polygon.items, 0..) |_, i| {
-        const axis = getPerpendicularAxis(&o2_collision_polygon, i);
+        const axis = getEdgeNormal(getPolygonEdge(&o2_collision_polygon, i));
         const projection_o1 = projectVertsOnAxis(axis, &o2_collision_polygon);
         const projection_o2 = projectVertsOnAxis(axis, &o1_collision_polygon);
 
@@ -729,14 +733,11 @@ test "object narrow collision" {
     const o2 = state.getObjectPtr(o2_id) catch unreachable;
     const o3 = state.getObjectPtr(o3_id) catch unreachable;
 
-    try std.testing.expect(!narrowCollisionCheck(gpa, state, o1, o2));
-    try std.testing.expect(narrowCollisionCheck(gpa, state, o1, o3));
+    try std.testing.expect(!narrowCollisionCheck(state, o1, o2));
+    try std.testing.expect(narrowCollisionCheck(state, o1, o3));
 }
 
-fn getPerpendicularAxis(collision_polygon: *State.CollisionPolygon, vert_index: usize) [2]f32 {
-    const tracy_zone = ztracy.ZoneNC(@src(), "Get Perpendicular Axis", 0x00_ff_00_00);
-    defer tracy_zone.End();
-
+fn getPolygonEdge(collision_polygon: *State.CollisionPolygon, vert_index: usize) [2]State.Vertex {
     const v1 = collision_polygon.items[vert_index];
 
     var next_vert_index = vert_index + 1;
@@ -745,10 +746,20 @@ fn getPerpendicularAxis(collision_polygon: *State.CollisionPolygon, vert_index: 
     }
     const v2 = collision_polygon.items[next_vert_index];
 
+    return .{ v1, v2 };
+}
+
+fn getEdgeNormal(edge: [2]State.Vertex) State.Vertex {
+    const tracy_zone = ztracy.ZoneNC(@src(), "Get Perpendicular Axis", 0x00_ff_00_00);
+    defer tracy_zone.End();
+
+    const v1 = edge[0];
+    const v2 = edge[1];
+
     return .{ -(v2[1] - v1[1]), v2[0] - v1[0] };
 }
 
-fn projectVertsOnAxis(axis: [2]f32, collision_polygon: *State.CollisionPolygon) struct { min: f32, max: f32 } {
+fn projectVertsOnAxis(axis: State.Vertex, collision_polygon: *State.CollisionPolygon) struct { min: f32, max: f32 } {
     const tracy_zone = ztracy.ZoneNC(@src(), "Project Verts on Axis", 0x00_ff_00_00);
     defer tracy_zone.End();
 
