@@ -380,15 +380,11 @@ fn shoot(allocator: std.mem.Allocator, state: *State.State, audio: *Audio.AudioS
 }
 
 fn wrapPosCoordinates(pos: *zm.Vec) void {
-    if (pos[0] > 1.0) {
-        pos[0] = -1.0;
-    } else if (pos[0] < -1.0) {
-        pos[0] = 1.0;
+    if (@abs(pos[0]) > 1.0) {
+        pos[0] = std.math.sign(pos[0]) * -1.0;
     }
-    if (pos[1] > 1.0) {
-        pos[1] = -1.0;
-    } else if (pos[1] < -1.0) {
-        pos[1] = 1.0;
+    if (@abs(pos[1]) > 1.0) {
+        pos[1] = std.math.sign(pos[1]) * -1.0;
     }
 }
 
@@ -739,11 +735,7 @@ test "object narrow collision" {
 
 fn getPolygonEdge(collision_polygon: *State.CollisionPolygon, vert_index: usize) [2]State.Vertex {
     const v1 = collision_polygon.items[vert_index];
-
-    var next_vert_index = vert_index + 1;
-    if (next_vert_index >= collision_polygon.items.len) {
-        next_vert_index = 0;
-    }
+    const next_vert_index = (vert_index + 1) % collision_polygon.items.len;
     const v2 = collision_polygon.items[next_vert_index];
 
     return .{ v1, v2 };

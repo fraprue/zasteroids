@@ -495,15 +495,18 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
             .cond = .always,
         });
 
-        if (zgui.begin("Score", .{
+        if (zgui.begin("##Score", .{
             .flags = .{
                 .no_title_bar = true,
                 .no_background = true,
-                .no_mouse_inputs = true,
                 .no_nav_inputs = true,
                 .always_auto_resize = true,
             },
         })) {
+            if (zgui.button("Settings (Esc)", .{})) {
+                playClickSound(allocator, audio);
+                state.show_settings = true;
+            }
             zgui.text("Score: {d}", .{state.score});
         }
         zgui.end();
