@@ -13,7 +13,14 @@ const Audio = @import("audio.zig");
 
 // zig fmt: off
 const wgsl_shader =
-\\  @group(0) @binding(0) var<uniform> offsetRotationScale: vec4<f32>;
+\\  struct Input {
+\\    offset: vec2<f32>,
+\\    rotation: f32,
+\\    scale: f32,
+\\    centroid: vec2<f32>,
+\\  };
+\\
+\\  @group(0) @binding(0) var<uniform> input: Input;
 \\  struct VertexOut {
 \\      @builtin(position) position_clip: vec4<f32>,
 \\      @location(0) color: vec4<f32>,
@@ -22,13 +29,19 @@ const wgsl_shader =
 \\      @location(0) vertex: vec2<f32>,
 \\      @location(1) color: vec4<f32>,
 \\  ) -> VertexOut {
-\\      let sinV = sin(offsetRotationScale[2]);
-\\      let cosV = cos(offsetRotationScale[2]);
+\\      let sinV = sin(input.rotation);
+\\      let cosV = cos(input.rotation);
 \\      var output: VertexOut;
 \\
+\\      var vertex_centered: vec2<f32>;
+\\      vertex_centered[0] = vertex[0] - input.centroid[0];
+\\      vertex_centered[1] = vertex[1] - input.centroid[1];
+\\
 \\      var newVertex: vec2<f32>;
-\\      newVertex[0] = offsetRotationScale[3] * (vertex[0] * cosV - vertex[1] * sinV) + offsetRotationScale[0];
-\\      newVertex[1] = offsetRotationScale[3] * (vertex[0] * sinV + vertex[1] * cosV) + offsetRotationScale[1];
+\\      newVertex[0] = (vertex_centered[0] * cosV - vertex_centered[1] * sinV) + input.centroid[0];
+\\      newVertex[1] = (vertex_centered[0] * sinV + vertex_centered[1] * cosV) + input.centroid[1];
+\\      newVertex[0] = newVertex[0] * input.scale + input.offset[0];
+\\      newVertex[1] = newVertex[1] * input.scale + input.offset[1];
 \\      output.position_clip = vec4(newVertex, 0.0, 1.0);
 \\      output.color = color;
 \\      return output;
@@ -53,9 +66,10 @@ pub const Mesh = struct {
     vertex_offset: i32,
     num_indices: u32,
     num_vertices: u32,
+    centroid: [2]f32,
 };
 
-const ShaderInputType = [4]f32; //posX, posY, rotation, scale
+const ShaderInputType = [6]f32; //posX, posY, rotation, scale, centroidX, centroidY
 
 pub const Config = struct {
     vsync: bool = true,
@@ -130,7 +144,13 @@ pub const GraphicsState = struct {
         zgui.getStyle().scaleAllSizes(scale_factor);
 
         const bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
+            zgpu.bufferEntry(
+                0,
+                .{ .vertex = true },
+                .uniform,
+                true,
+                @sizeOf(ShaderInputType),
+            ),
         });
         defer gctx.releaseResource(bind_group_layout);
 
@@ -358,10 +378,23 @@ fn appendMesh(
         .vertex_offset = @as(i32, @intCast(meshes_vertices.items.len)),
         .num_indices = @as(u32, @intCast(index_data.len)),
         .num_vertices = @as(u32, @intCast(vertex_data.len)),
+        .centroid = calculateCentroid(vertex_data),
     });
 
     meshes_indices.appendSlice(allocator, index_data) catch unreachable;
     meshes_vertices.appendSlice(allocator, vertex_data) catch unreachable;
+}
+
+fn calculateCentroid(vertex_data: []const Vertex) [2]f32 {
+    var centroid: [2]f32 = .{ 0.0, 0.0 };
+    for (vertex_data) |vertex| {
+        centroid[0] += vertex.position[0];
+        centroid[1] += vertex.position[1];
+    }
+    const count = @as(f32, @floatFromInt(vertex_data.len));
+    centroid[0] /= count;
+    centroid[1] /= count;
+    return centroid;
 }
 
 pub fn render(allocator: std.mem.Allocator, state: *State.State, graphics: *GraphicsState, audio: *Audio.AudioState) void {
@@ -899,6 +932,9 @@ fn present(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *State
                 const bind_group = gctx.lookupResource(graphics.bind_group) orelse break :object_pass;
 
                 {
+                    const mesh_id = @intFromEnum(render_object.mesh_type);
+                    const mesh = &graphics.meshes.items[mesh_id];
+
                     pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                     pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
@@ -907,6 +943,8 @@ fn present(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *State
                         render_object.pos[1],
                         render_object.rot,
                         render_object.scale,
+                        mesh.centroid[0],
+                        mesh.centroid[1],
                     };
 
                     const mem = gctx.uniformsAllocate(ShaderInputType, 1);
@@ -917,12 +955,12 @@ fn present(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *State
                         bind_group,
                         &.{mem.offset},
                     );
-                    const mesh_id = @intFromEnum(render_object.mesh_type);
+
                     pass.drawIndexed(
-                        graphics.meshes.items[mesh_id].num_indices,
+                        mesh.num_indices,
                         1,
-                        graphics.meshes.items[mesh_id].index_offset,
-                        graphics.meshes.items[mesh_id].vertex_offset,
+                        mesh.index_offset,
+                        mesh.vertex_offset,
                         0,
                     );
                 }

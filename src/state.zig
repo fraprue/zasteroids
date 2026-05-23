@@ -95,6 +95,7 @@ pub const CollisionPolygon = std.ArrayList(Vertex);
 pub const ObjectCollision = struct {
     collision_sphere_radius: f32,
     collision_polygon: CollisionPolygon,
+    collision_polygon_centroid: [2]f32,
 };
 
 var next_free_object_id: ObjectId = 0;
@@ -471,12 +472,15 @@ pub const State = struct {
         const tracy_zone = ztracy.ZoneNC(@src(), "Get Object Collision Polygon", 0x00_00_ff_00);
         defer tracy_zone.End();
 
+        const collision_data = &self.object_collision_data.items[@intFromEnum(object.mesh_type)];
+
         polygonLocalToWorld(
-            &self.object_collision_data.items[@intFromEnum(object.mesh_type)].collision_polygon,
+            &collision_data.collision_polygon,
             collision_polygon,
             object.pos,
             object.rot,
             object.scale,
+            collision_data.collision_polygon_centroid,
         );
     }
 };
@@ -495,20 +499,42 @@ pub fn calculateCollisionSphereRadius(collision_polygon: *CollisionPolygon) f32 
     return collision_sphere_radius;
 }
 
-fn vertexLocalToWorld(v: Vertex, pos: zm.Vec, rot: f32, scale: f32) Vertex {
+pub fn calculateCentroid(vertex_data: *CollisionPolygon) [2]f32 {
+    var centroid: [2]f32 = .{ 0.0, 0.0 };
+    for (vertex_data.items) |vertex| {
+        centroid[0] += vertex[0];
+        centroid[1] += vertex[1];
+    }
+    const count = @as(f32, @floatFromInt(vertex_data.items.len));
+    centroid[0] /= count;
+    centroid[1] /= count;
+    return centroid;
+}
+
+fn vertexLocalToWorld(v: Vertex, pos: zm.Vec, rot: f32, scale: f32, centroid: ?[2]f32) Vertex {
+    var v_centered = v;
+    if (centroid) |c| {
+        v_centered[0] -= c[0];
+        v_centered[1] -= c[1];
+    }
     const sincos = zm.sincos(rot);
-    const x = v[0] * sincos[1] - v[1] * sincos[0];
-    const y = v[0] * sincos[0] + v[1] * sincos[1];
+    var x = v_centered[0] * sincos[1] - v_centered[1] * sincos[0];
+    var y = v_centered[0] * sincos[0] + v_centered[1] * sincos[1];
+    if (centroid) |c| {
+        x += c[0];
+        y += c[1];
+    }
     return .{ x * scale + pos[0], y * scale + pos[1] };
 }
 
-pub fn polygonLocalToWorld(local_polygon: *CollisionPolygon, world_polygon: *CollisionPolygon, pos: zm.Vec, rot: f32, scale: f32) void {
+pub fn polygonLocalToWorld(local_polygon: *CollisionPolygon, world_polygon: *CollisionPolygon, pos: zm.Vec, rot: f32, scale: f32, centroid: ?[2]f32) void {
     for (local_polygon.items) |vertex| {
         world_polygon.appendAssumeCapacity(vertexLocalToWorld(
             vertex,
             pos,
             rot,
             scale,
+            centroid,
         ));
     }
 }

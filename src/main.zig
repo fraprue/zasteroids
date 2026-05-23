@@ -73,10 +73,10 @@ pub fn main() !void {
         player_collision_polygon.appendAssumeCapacity(.{ -1.0, -1.0 });
         player_collision_polygon.appendAssumeCapacity(.{ 1.0, -1.0 });
 
-        const player_collision_radius = State.calculateCollisionSphereRadius(&player_collision_polygon);
         state.object_collision_data.appendAssumeCapacity(.{
             .collision_polygon = player_collision_polygon,
-            .collision_sphere_radius = player_collision_radius,
+            .collision_sphere_radius = State.calculateCollisionSphereRadius(&player_collision_polygon),
+            .collision_polygon_centroid = State.calculateCentroid(&player_collision_polygon),
         });
 
         var asteroid_collision_polygon = try State.CollisionPolygon.initCapacity(gpa, 5);
@@ -86,10 +86,10 @@ pub fn main() !void {
         asteroid_collision_polygon.appendAssumeCapacity(.{ 0.3, -1.0 });
         asteroid_collision_polygon.appendAssumeCapacity(.{ 0.7, 0.0 });
 
-        const asteroid_collision_radius = State.calculateCollisionSphereRadius(&asteroid_collision_polygon);
         state.object_collision_data.appendAssumeCapacity(.{
             .collision_polygon = asteroid_collision_polygon,
-            .collision_sphere_radius = asteroid_collision_radius,
+            .collision_sphere_radius = State.calculateCollisionSphereRadius(&asteroid_collision_polygon),
+            .collision_polygon_centroid = State.calculateCentroid(&asteroid_collision_polygon),
         });
     }
 
