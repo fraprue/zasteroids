@@ -272,19 +272,18 @@ pub const GraphicsState = struct {
         );
     }
 
-    pub fn updateWindowTitle(self: *GraphicsState, allocator: std.mem.Allocator, state: *State.State) void {
+    pub fn updateWindowTitle(self: *GraphicsState, allocator: std.mem.Allocator) void {
         const tracy_window_zone = ztracy.ZoneNC(@src(), "Game Render Window Title", 0x00_00_00_ff);
         defer tracy_window_zone.End();
 
         const gctx = self.gctx;
 
-        const window_name = "My First Game";
+        const window_name = "Zasteroids";
         const window_width = gctx.swapchain_descriptor.width;
         const window_height = gctx.swapchain_descriptor.height;
 
-        const window_title: [:0]u8 = std.fmt.allocPrintSentinel(allocator, "{s}, Player: {s}, Res: {}×{}", .{
+        const window_title: [:0]u8 = std.fmt.allocPrintSentinel(allocator, "{s}, Res: {}×{}", .{
             window_name,
-            state.player_name,
             window_width,
             window_height,
         }, 0) catch unreachable;
@@ -397,47 +396,25 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
     }
 
     if (state.game_state == State.GameState.starting) {
-        // Set the starting menu position to custom values
         zgui.setNextWindowPos(.{
-            .x = 0.5 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
-            .y = 0.3 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
+            .x = 0.33 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
+            .y = 0.33 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
             .cond = .once,
         });
 
         if (zgui.begin("Start Menu", .{ .flags = .{ .always_auto_resize = true } })) {
-            var player_name = [_:0]u8{0} ** 12;
-            @memcpy(player_name[0..state.player_name.len], state.player_name);
-
-            if (zgui.inputText(
-                "Player Name",
-                .{
-                    .buf = player_name[0..],
-                },
-            )) {
-                var i: usize = 0;
-                var player_name_array = [_]u8{0} ** 12;
-                while (player_name[i] != 0) : (i += 1) {
-                    player_name_array[i] = player_name[i];
-                }
-
-                if (i != state.player_name.len) {
-                    allocator.free(state.player_name);
-                    state.player_name = allocator.alloc(u8, i) catch unreachable;
-                }
-
-                @memcpy(state.player_name, player_name_array[0..i]);
-                graphics.updateWindowTitle(allocator, state);
-            }
-
-            if (zgui.button("Start", .{})) {
+            zgui.beginGroup();
+            if (zgui.button("Start", .{ .h = 50.0, .w = 200.0 })) {
                 playClickSound(allocator, audio);
                 state.startGame();
             }
             zgui.sameLine(.{});
-            if (zgui.button("Quit", .{})) {
+            if (zgui.button("Quit", .{ .h = 50.0, .w = 200.0 })) {
                 playClickSound(allocator, audio);
                 graphics.window.setShouldClose(true);
             }
+            zgui.endGroup();
+            zgui.newLine();
             if (zgui.button("Settings", .{})) {
                 playClickSound(allocator, audio);
                 state.show_settings = true;
@@ -452,33 +429,18 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
 
     if (state.game_state == State.GameState.highscore) {
         zgui.setNextWindowPos(.{
-            .x = 0.5 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
-            .y = 0.3 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
+            .x = 0.33 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
+            .y = 0.33 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
             .cond = .once,
         });
 
         if (zgui.begin("Highscore", .{ .flags = .{ .always_auto_resize = true } })) {
-            zgui.text("Highscore:", .{});
-
             var highscore_list: State.HighscoreList = .empty;
             defer highscore_list.deinit(allocator);
             state.getHighscore(allocator, &highscore_list) catch unreachable;
 
-            if (zgui.beginTable("Highscore", .{
-                .column = 2,
-                .flags = .{ .resizable = true },
-            })) {
-                zgui.tableSetupColumn("Name", .{});
-                zgui.tableSetupColumn("Score", .{});
-                zgui.tableHeadersRow();
-                for (highscore_list.items) |entry| {
-                    _ = zgui.tableNextColumn();
-                    zgui.text("{s}", .{entry.name});
-                    _ = zgui.tableNextColumn();
-                    zgui.text("{d}", .{entry.score});
-                }
-                zgui.endTable();
-            }
+            renderHighscoreTable(&highscore_list);
+
             if (zgui.button("Back", .{})) {
                 playClickSound(allocator, audio);
                 state.hideHighscore();
@@ -488,7 +450,6 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
     }
 
     if (state.game_state == State.GameState.running) {
-        // Set the score display position to custom values
         zgui.setNextWindowPos(.{
             .x = 20.0,
             .y = 20.0,
@@ -534,7 +495,6 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
     }
 
     if (state.game_state == State.GameState.gameover) {
-        // Set the starting menu position to custom values
         zgui.setNextWindowPos(.{
             .x = 0.5 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.width)),
             .y = 0.3 * @as(f32, @floatFromInt(gctx.swapchain_descriptor.height)),
@@ -543,7 +503,57 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
 
         if (zgui.begin("Gameover Menu", .{ .flags = .{ .always_auto_resize = true } })) {
             zgui.text("You scored {d} points.", .{state.score});
-            zgui.text("Git gud!", .{});
+
+            var highscore_list: State.HighscoreList = .empty;
+            defer highscore_list.deinit(allocator);
+            state.getHighscore(allocator, &highscore_list) catch unreachable;
+            const new_highscore = highscore_list.items.len == 0 or state.score > highscore_list.items[highscore_list.items.len - 1].score;
+
+            if (new_highscore) {
+                zgui.text("New Highscore!", .{});
+            } else {
+                zgui.text("Git gud!", .{});
+            }
+
+            zgui.newLine();
+
+            renderHighscoreTable(&highscore_list);
+
+            if (new_highscore and state.can_store_highscore) {
+                var player_name = [_:0]u8{0} ** 12;
+                @memcpy(player_name[0..state.player_name.len], state.player_name);
+                if (zgui.inputText(
+                    "Player Name",
+                    .{
+                        .buf = &player_name,
+                    },
+                )) {
+                    var i: usize = 0;
+                    var player_name_array = [_]u8{0} ** 12;
+                    while (player_name[i] != 0) : (i += 1) {
+                        player_name_array[i] = player_name[i];
+                    }
+
+                    if (i != state.player_name.len) {
+                        allocator.free(state.player_name);
+                        state.player_name = allocator.alloc(u8, i) catch unreachable;
+                    }
+
+                    @memcpy(state.player_name, player_name_array[0..i]);
+                }
+                if (zgui.button("Store Highscore", .{})) {
+                    playClickSound(allocator, audio);
+                    highscore_list.append(allocator, .{
+                        .name = state.player_name[0..],
+                        .score = state.score,
+                    }) catch unreachable;
+
+                    state.storeHighscore(allocator, &highscore_list) catch unreachable;
+                    state.can_store_highscore = false;
+                }
+            }
+
+            zgui.newLine();
             if (zgui.button("Restart", .{})) {
                 playClickSound(allocator, audio);
                 state.startGame();
@@ -553,12 +563,27 @@ fn renderGui(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *Sta
                 playClickSound(allocator, audio);
                 graphics.window.setShouldClose(true);
             }
-            if (zgui.button("To Start Menu", .{})) {
-                playClickSound(allocator, audio);
-                state.game_state = State.GameState.starting;
-            }
         }
         zgui.end();
+    }
+}
+
+fn renderHighscoreTable(highscore_list: *State.HighscoreList) void {
+    zgui.text("Highscore:", .{});
+    if (zgui.beginTable("Highscore", .{
+        .column = 2,
+        .flags = .{ .resizable = true },
+    })) {
+        zgui.tableSetupColumn("Name", .{});
+        zgui.tableSetupColumn("Score", .{});
+        zgui.tableHeadersRow();
+        for (highscore_list.items) |entry| {
+            _ = zgui.tableNextColumn();
+            zgui.text("{s}", .{entry.name});
+            _ = zgui.tableNextColumn();
+            zgui.text("{d}", .{entry.score});
+        }
+        zgui.endTable();
     }
 }
 
@@ -568,7 +593,6 @@ fn renderSettingsMenu(allocator: std.mem.Allocator, graphics: *GraphicsState, st
 
     const gctx = graphics.gctx;
 
-    // Set the settings menu position to custom values
     zgui.setNextWindowPos(.{ .x = 20.0, .y = 20.0, .cond = .once });
 
     if (zgui.begin("Settings", .{ .flags = .{ .always_auto_resize = true } })) {
@@ -663,9 +687,9 @@ fn renderSettingsMenu(allocator: std.mem.Allocator, graphics: *GraphicsState, st
                 "Gamepad Name : {s}",
                 .{state.debug_state.registered_gamepad_name},
             );
+        }
 
-            zgui.separatorText("Game Settings");
-
+        if (zgui.collapsingHeader("Game Settings", .{})) {
             var player_id_list: std.ArrayList(State.ObjectId) = .empty;
             defer player_id_list.deinit(allocator);
             state.getAllObjectsOfType(allocator, "player", &player_id_list) catch unreachable;
@@ -731,87 +755,93 @@ fn renderSettingsMenu(allocator: std.mem.Allocator, graphics: *GraphicsState, st
             });
         }
 
-        zgui.separatorText("Audio Settings");
-
-        var master_volume = audio.config.master_volume;
-        if (zgui.sliderFloat("Master Volume", .{
-            .v = &master_volume,
-            .min = 0.0,
-            .max = 1.0,
-        })) {
-            audio.setMasterVolume(master_volume);
-        }
-
-        var music_volume = audio.config.music_volume;
-        if (zgui.sliderFloat("Music Volume", .{
-            .v = &music_volume,
-            .min = 0.0,
-            .max = 1.0,
-        })) {
-            audio.setMusicVolume(music_volume);
-        }
-
-        var sound_volume = audio.config.sound_volume;
-        if (zgui.sliderFloat("Sound Volume", .{
-            .v = &sound_volume,
-            .min = 0.0,
-            .max = 1.0,
-        })) {
-            audio.setSoundVolume(sound_volume);
-        }
-
-        zgui.separatorText("Graphics Settings");
-
-        var vsync = graphics.config.vsync;
-        if (zgui.checkbox("VSync", .{ .v = &vsync })) {
-            graphics.setVSync(vsync);
-        }
-
-        var limit_fps = (state.config.fps_target > 0);
-        _ = zgui.checkbox("Limit Framerate", .{ .v = &limit_fps });
-
-        if (limit_fps) {
-            if (state.config.fps_target <= 0) {
-                state.config.fps_target = 60;
+        if (zgui.collapsingHeader("Audio Settings", .{})) {
+            var master_volume = audio.config.master_volume;
+            if (zgui.sliderFloat("Master Volume", .{
+                .v = &master_volume,
+                .min = 0.0,
+                .max = 1.0,
+            })) {
+                audio.setMasterVolume(master_volume);
             }
-            var fps_target = @as(i32, state.config.fps_target);
-            if (zgui.sliderInt("Target FPS", .{ .v = &fps_target, .min = 30, .max = 160 })) {
-                state.config.fps_target = @truncate(fps_target);
+
+            var music_volume = audio.config.music_volume;
+            if (zgui.sliderFloat("Music Volume", .{
+                .v = &music_volume,
+                .min = 0.0,
+                .max = 1.0,
+            })) {
+                audio.setMusicVolume(music_volume);
             }
-        } else {
-            state.config.fps_target = -1;
+
+            var sound_volume = audio.config.sound_volume;
+            if (zgui.sliderFloat("Sound Volume", .{
+                .v = &sound_volume,
+                .min = 0.0,
+                .max = 1.0,
+            })) {
+                audio.setSoundVolume(sound_volume);
+            }
         }
 
-        if (zgui.button("Store Config", .{})) {
-            playClickSound(allocator, audio);
-            GlobalConfig.saveConfig(.{
-                .audio = audio.config,
-                .render = graphics.config,
-                .game = state.config,
-            });
+        if (zgui.collapsingHeader("Graphics Settings", .{})) {
+            var vsync = graphics.config.vsync;
+            if (zgui.checkbox("VSync", .{ .v = &vsync })) {
+                graphics.setVSync(vsync);
+            }
+
+            var limit_fps = (state.config.fps_target > 0);
+            _ = zgui.checkbox("Limit Framerate", .{ .v = &limit_fps });
+
+            if (limit_fps) {
+                if (state.config.fps_target <= 0) {
+                    state.config.fps_target = 60;
+                }
+                var fps_target = @as(i32, state.config.fps_target);
+                if (zgui.sliderInt("Target FPS", .{ .v = &fps_target, .min = 30, .max = 160 })) {
+                    state.config.fps_target = @truncate(fps_target);
+                }
+            } else {
+                state.config.fps_target = -1;
+            }
         }
-        zgui.sameLine(.{});
-        if (zgui.button("Reset Config", .{})) {
-            playClickSound(allocator, audio);
-            const config = GlobalConfig.loadConfig();
-            state.setConfig(config.game);
-            audio.setConfig(config.audio);
-            graphics.setConfig(config.render);
-        }
-        zgui.sameLine(.{});
-        if (zgui.button("Default Config", .{})) {
-            playClickSound(allocator, audio);
-            state.defaultConfig();
-            audio.defaultConfig();
-            graphics.defaultConfig();
+        zgui.newLine();
+        {
+            zgui.beginGroup();
+            if (zgui.button("Store Config", .{})) {
+                playClickSound(allocator, audio);
+                GlobalConfig.saveConfig(.{
+                    .audio = audio.config,
+                    .render = graphics.config,
+                    .game = state.config,
+                });
+            }
+            zgui.sameLine(.{});
+            if (zgui.button("Reset Config", .{})) {
+                playClickSound(allocator, audio);
+                const config = GlobalConfig.loadConfig();
+                state.setConfig(config.game);
+                audio.setConfig(config.audio);
+                graphics.setConfig(config.render);
+            }
+            zgui.sameLine(.{});
+            if (zgui.button("Default Config", .{})) {
+                playClickSound(allocator, audio);
+                state.defaultConfig();
+                audio.defaultConfig();
+                graphics.defaultConfig();
+            }
+            zgui.endGroup();
         }
 
-        if (zgui.button("Cancel", .{})) {
+        zgui.newLine();
+
+        if (zgui.button("Cancel", .{ .h = 30.0, .w = 85.0 })) {
             playClickSound(allocator, audio);
             state.show_settings = false;
         }
         zgui.sameLine(.{});
-        if (zgui.button("Quit", .{})) {
+        if (zgui.button("Quit", .{ .h = 30.0, .w = 85.0 })) {
             playClickSound(allocator, audio);
             graphics.window.setShouldClose(true);
         }
@@ -921,7 +951,7 @@ fn present(allocator: std.mem.Allocator, graphics: *GraphicsState, state: *State
     gctx.submit(&.{commands});
     const present_result = gctx.present();
     if (present_result == .swap_chain_resized) {
-        graphics.updateWindowTitle(allocator, state);
+        graphics.updateWindowTitle(allocator);
     }
 }
 

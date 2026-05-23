@@ -160,6 +160,7 @@ pub const State = struct {
 
     highscore_cached: bool,
     highscore_cache: HighscoreList,
+    can_store_highscore: bool,
 
     controller_type: ControllerType,
     registered_joystick: ?zglfw.Joystick,
@@ -205,6 +206,7 @@ pub const State = struct {
             .render_scores = .empty,
             .highscore_cached = false,
             .highscore_cache = .empty,
+            .can_store_highscore = false,
 
             .controller_type = ControllerType.keyboard,
             .registered_joystick = null,
@@ -273,6 +275,7 @@ pub const State = struct {
 
         self.score = 0;
         self.render_scores = .empty;
+        self.can_store_highscore = true;
 
         self.game_state = GameState.running;
     }
@@ -291,9 +294,6 @@ pub const State = struct {
             .name = self.player_name,
             .score = self.score,
         });
-
-        try self.storeHighscore(&highscore_list);
-        self.clearCachedHighscoreData(allocator);
 
         self.render_scores.deinit(allocator);
         self.render_scores = .empty;
@@ -384,7 +384,7 @@ pub const State = struct {
         std.mem.sort(HighscoreEntry, self.highscore_cache.items, {}, highscoreSort);
     }
 
-    fn storeHighscore(_: *State, highscore_list: *HighscoreList) !void {
+    pub fn storeHighscore(self: *State, allocator: std.mem.Allocator, highscore_list: *HighscoreList) !void {
         std.mem.sort(HighscoreEntry, highscore_list.items, {}, highscoreSort);
 
         var highscore_file = try std.fs.cwd().createFile("highscore.txt", .{});
@@ -402,6 +402,7 @@ pub const State = struct {
 
             if (entry_count >= max_highscore_entries) break;
         }
+        self.clearCachedHighscoreData(allocator);
     }
 
     pub fn createObject(self: *State, object: ObjectState) error{OutOfMemory}!ObjectId {

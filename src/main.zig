@@ -120,7 +120,7 @@ pub fn main() !void {
     defer input_debouncer.deinit();
 
     const window = graphics.window;
-    graphics.updateWindowTitle(gpa, state);
+    graphics.updateWindowTitle(gpa);
 
     while (!window.shouldClose()) {
         const tracy_game_tick_zone = ztracy.ZoneNC(@src(), "Game Tick", 0x00_ff_00_00);
