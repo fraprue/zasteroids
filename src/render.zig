@@ -34,14 +34,12 @@ const wgsl_shader =
 \\      var output: VertexOut;
 \\
 \\      var vertex_centered: vec2<f32>;
-\\      vertex_centered[0] = vertex[0] - input.centroid[0];
-\\      vertex_centered[1] = vertex[1] - input.centroid[1];
+\\      vertex_centered = vertex - input.centroid;
 \\
 \\      var newVertex: vec2<f32>;
 \\      newVertex[0] = (vertex_centered[0] * cosV - vertex_centered[1] * sinV) + input.centroid[0];
 \\      newVertex[1] = (vertex_centered[0] * sinV + vertex_centered[1] * cosV) + input.centroid[1];
-\\      newVertex[0] = newVertex[0] * input.scale + input.offset[0];
-\\      newVertex[1] = newVertex[1] * input.scale + input.offset[1];
+\\      newVertex = newVertex * input.scale + input.offset;
 \\      output.position_clip = vec4(newVertex, 0.0, 1.0);
 \\      output.color = color;
 \\      return output;
