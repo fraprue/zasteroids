@@ -599,7 +599,11 @@ test "object broad collision" {
     try state.init(gpa, config);
     defer state.deinit(gpa);
 
-    try state.object_collision_data.append(gpa, .{ .collision_sphere_radius = 0.1, .collision_polygon = .empty });
+    try state.object_collision_data.append(gpa, .{
+        .collision_sphere_radius = 0.1,
+        .collision_polygon = .empty,
+        .collision_polygon_centroid = .{ 0.0, 0.0 },
+    });
 
     const o1_id = try state.createObject(.{
         .pos = zm.Vec{ 0.0, 0.0, 0.0, 0.0 },
@@ -698,29 +702,30 @@ test "object narrow collision" {
     try state.object_collision_data.append(gpa, .{
         .collision_sphere_radius = triangle_collision_radius,
         .collision_polygon = triangle_collision_polygon,
+        .collision_polygon_centroid = State.calculateCentroid(&triangle_collision_polygon),
     });
 
     const o1_id = try state.createObject(.{
-        .pos = zm.Vec{ 0.1, 0.0, 0.0, 0.0 },
+        .pos = zm.Vec{ 1.0, 0.0, 0.0, 0.0 },
         .velocity = 0.0,
-        .rot = std.math.pi / 2.0,
-        .scale = 0.1,
+        .rot = 0.0,
+        .scale = 1.0,
         .type = "",
         .mesh_type = Render.MeshType.triangle,
     });
     const o2_id = try state.createObject(.{
-        .pos = zm.Vec{ -0.11, 0.0, 0.0, 0.0 },
+        .pos = zm.Vec{ -1.1, 0.0, 0.0, 0.0 },
         .velocity = 0.0,
-        .rot = -std.math.pi / 2.0,
-        .scale = 0.1,
+        .rot = 0.0,
+        .scale = 1.0,
         .type = "",
         .mesh_type = Render.MeshType.triangle,
     });
     const o3_id = try state.createObject(.{
-        .pos = zm.Vec{ -0.09, 0.0, 0.0, 0.0 },
+        .pos = zm.Vec{ -1.0, 0.0, 0.0, 0.0 },
         .velocity = 0.0,
-        .rot = -std.math.pi / 2.0,
-        .scale = 0.1,
+        .rot = 0.0,
+        .scale = 1.0,
         .type = "",
         .mesh_type = Render.MeshType.triangle,
     });

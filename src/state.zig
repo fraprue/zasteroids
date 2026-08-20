@@ -725,6 +725,7 @@ test "get collision radius" {
     try state.object_collision_data.append(gpa, .{
         .collision_sphere_radius = mesh_collision_radius,
         .collision_polygon = .empty,
+        .collision_polygon_centroid = .{ 0.0, 0.0 },
     });
 
     const object = ObjectState{
